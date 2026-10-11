@@ -1,5 +1,11 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — second hardware log (disc 0a43221-1011-2141, profiler build)
+- LOG001.TXT (158 s, 0 dropped): no PROF dump (chord not registered or not pressed; auto dump is at 240 s).
+  Per state, fps / DL median: title 20 / 32 ms, file menu 13 / 45, class select 14 / 43, pilot select
+  31 / 10, test details 9 / 61, flight 25 / 25 (80 s of flight), results 34 / 18. Same picture as run 1.
+- Maintainer: no further hardware test soon; work from these numbers.
+
 ## 2026-10-11 — SD log works on hardware (disc deb13bc-1011-2120, NAS wings64-dc-20261011b-sdfix)
 - Maintainer: "Saving works confirmed", screen shows "SD LOG000 TXT": the backported KOS 1c6398f SD stack
   (src/dc/kos_sd) brings the card up where v2.2.2's stuck at "probing".

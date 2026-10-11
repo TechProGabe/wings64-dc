@@ -22,6 +22,18 @@ static int active = 0;           /* list of the current state */
 uint32_t gpvr_state_serial;      /* bumped whenever the active list or its header may have changed */
 static size_t used[3], cap[3];
 
+/* Direct emit (docs/fps-plan.md change 1): vertices and headers are written straight into this frame's
+   half of each list's DMA buffer (pvr_set_vertbuf splits the buffer in two), one allocated cache line per
+   32-byte record, instead of a stack copy plus pvr_list_prim's memcpy (which also read-allocated every
+   output line). The written amount is handed to KOS once per list at frame end.
+   Kill switch: -DWINGS64_DIRECT_EMIT=0 (pvr_list_prim path). */
+#ifndef WINGS64_DIRECT_EMIT
+#define WINGS64_DIRECT_EMIT 1
+#endif
+#if WINGS64_DIRECT_EMIT
+static uint8_t *wbase[3], *wp[3], *wend[3];
+#endif
+
 void gpvr_init(void) {
     cap[0] = VB_OP; cap[1] = VB_PT; cap[2] = VB_TR;
     for (int i = 0; i < 3; i++) {
@@ -39,9 +51,19 @@ void gpvr_frame_begin(uint32_t bg_argb) {
     memset(cur_valid, 0, sizeof cur_valid);
     gpvr_state_serial++;
     memset(used, 0, sizeof used);
+#if WINGS64_DIRECT_EMIT
+    for (int i = 0; i < 3; i++) {
+        wbase[i] = wp[i] = pvr_vertbuf_tail(list_id[i]);
+        wend[i] = wbase[i] + cap[i] / 2 - 64;   /* this frame's half, as pvr_set_vertbuf sized it */
+    }
+#endif
 }
 
 void gpvr_frame_end(void) {
+#if WINGS64_DIRECT_EMIT
+    for (int i = 0; i < 3; i++)
+        if (wp[i] != wbase[i]) pvr_vertbuf_written(list_id[i], (size_t)(wp[i] - wbase[i]));
+#endif
     pvr_scene_finish();
 }
 
@@ -56,11 +78,29 @@ void gpvr_fog_color(uint32_t argb) {
     pvr_fog_table_color(1.0f, ((argb >> 16) & 0xFF) / 255.0f, ((argb >> 8) & 0xFF) / 255.0f, (argb & 0xFF) / 255.0f);
 }
 
+#if WINGS64_DIRECT_EMIT
+/* One 32-byte record into the list: allocate the line (no read of stale RAM), then eight word stores. */
+static inline void put32(uint8_t *dst, const void *src) {
+    const uint32_t *s = src;
+    uint32_t *d = (uint32_t *)dst;
+    shz_dcache_alloc_line(d);
+    d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
+    d[4] = s[4]; d[5] = s[5]; d[6] = s[6]; d[7] = s[7];
+}
+
 static void emit(int list, const void *data, size_t n) {
-    if (used[list] + n > cap[list] - 64) { gpvr_stats.overflow++; return; }
+    const uint8_t *src = data;
+    if (wp[list] + n > wend[list]) { gpvr_stats.overflow++; return; }
+    for (size_t o = 0; o < n; o += 32) put32(wp[list] + o, src + o);
+    wp[list] += n;
+}
+#else
+static void emit(int list, const void *data, size_t n) {
+    if (used[list] + n > cap[list] / 2 - 64) { gpvr_stats.overflow++; return; }   /* this frame's half */
     pvr_list_prim(list_id[list], data, n);
     used[list] += n;
 }
+#endif
 
 static void compile_and_emit(const gpvr_state_t *st) {
     pvr_poly_cxt_t cxt;
@@ -113,11 +153,23 @@ void gpvr_tri(const gpvr_vtx_t *a, const gpvr_vtx_t *b, const gpvr_vtx_t *c) {
 }
 
 void gpvr_tri_pv(const pvr_vertex_t *a, const pvr_vertex_t *b, const pvr_vertex_t *c) {
+#if WINGS64_DIRECT_EMIT
+    uint8_t *d = wp[active];
+    if (d + 96 > wend[active]) { gpvr_stats.overflow++; return; }
+    put32(d, a);
+    put32(d + 32, b);
+    put32(d + 64, c);
+    ((pvr_vertex_t *)d)->flags = PVR_CMD_VERTEX;          /* callers' flags are not trusted */
+    ((pvr_vertex_t *)(d + 32))->flags = PVR_CMD_VERTEX;
+    ((pvr_vertex_t *)(d + 64))->flags = PVR_CMD_VERTEX_EOL;
+    wp[active] = d + 96;
+#else
     pvr_vertex_t v[3] __attribute__((aligned(32)));
     v[0] = *a; v[1] = *b; v[2] = *c;
     v[0].flags = v[1].flags = PVR_CMD_VERTEX;
     v[2].flags = PVR_CMD_VERTEX_EOL;
     emit(active, v, sizeof v);
+#endif
     gpvr_stats.tris++;
 }
 
