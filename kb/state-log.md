@@ -1,6 +1,6 @@
 # state-log — evidence, newest first
 
-## 2026-10-10 — M0 built (build 1c3899cd-1011-0140); hardware boot pending
+## 2026-10-10 — M0 built (build 574fd2b-1011-0141); hardware boot pending
 - Container: debian bookworm → dc-chain profile 14.3.0 (sh only, m4-single + m4-single-only multilibs) →
   KOS v2.2.2 with KOS_SH4_PRECISION=-m4-single-only → mkdcdisc v0.0.4. ~25 min on 6 colima CPUs.
 - ROM: SHA-1 ec771aed…191a verified; slice ROM[0xDE720,0x6314D0) = 5,582,256 B, crc32 DAFCC147.

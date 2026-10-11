@@ -5,7 +5,7 @@ Updated 2026-10-10 (M0 built; awaiting first CD-R boot).
 | metric | value | evidence |
 |---|---|---|
 | milestone | **M0 built, hardware boot pending** | state-log 2026-10-10 M0 |
-| M0 disc | `build/wings64.cdi` build `1c3899cd-1011-0140` (705 MB raw, padded, 80-min CD-R) sha256 `4ff549fff3d2918a…` | `./run.sh disc` |
+| M0 disc | `build/wings64.cdi` build `574fd2b-1011-0141` (705 MB raw, padded, 80-min CD-R) sha256 `fd7fed8e46ec7887…` | `./run.sh disc` |
 | toolchain | image `wings64-dc:ce773e5503b9`: GCC 14.3.0, KOS v2.2.2 `c23410b` (-m4-single-only), mkdcdisc v0.0.4 `2b98b0d` | `docker/pins.env` |
 | decomp pin | `1a8558f`, 0 patches | `scripts/fetch_decomp.sh` |
 | sh4zam pin | fork `7747e5d` (v0.9.1), built from source in `src/game/Makefile` | submodule |
