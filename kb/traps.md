@@ -165,3 +165,9 @@
   frame is ~3 KiB. Batch with snd_sh4_to_aica_stop/start so the ARM sees a frame at once.
 - Yamaha ADPCM on saw-like waves with hard edges sits near 10 dB SNR (step adaptation lags the jump);
   a beam search buys ~1 dB. PCM8 is the fix, budget permitting.
+
+## Paid for on the first hardware runs (2026-10-11)
+- **KOS v2.2.2's SD/SCIF-SPI driver never brings a card up on the console** (stuck "probing", card in the
+  adapter). KOS 1c6398f's sd.c + scif-spi.c (backported in src/dc/kos_sd) work first time on the same card.
+  Use 8.3 upper-case names on the card. The console is muted during bring-up: show SD state on screen.
+- **Flycast frame rates are not hardware frame rates**: ~30 fps in the air in Flycast, 15-20 on the console.

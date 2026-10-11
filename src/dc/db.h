@@ -89,5 +89,7 @@ int db_sd_available(void);
 int db_sd_enabled(void);
 void db_sd_set_enabled(int on);
 const char *db_sd_status(void);
+/* Write <SD dir>/<name> = a then b (b may be NULL/0). Main thread only; needs the card up. 0 = ok. */
+int db_sd_write_file(const char *name, const void *a, unsigned alen, const void *b, unsigned blen);
 
 #endif

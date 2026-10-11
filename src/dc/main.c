@@ -18,6 +18,7 @@
 #include "gfx/gfx_pvr.h"
 #include "audio/aica_drv.h"
 #include "audio/aica_synth.h"
+#include "prof.h"
 
 #include <kos.h>
 #include <malloc.h>
@@ -248,6 +249,7 @@ done:
         wings64_rdram_init();
         db_log("boot: starting decomp bootproc\n");
         bootproc(NULL);
+        prof_init();     /* DB_PROF: chained on the scheduler tick that bootproc's threads now run on */
         /* The game's scheduler thread owns the PVR from here (gfx_f3d.c); main only reports.
            M2 gate: the state machine must pass title -> file menu -> vehicle & class select. */
         int last = -2, seen_title = 0, seen_file = 0, seen_flight = 0;
@@ -274,6 +276,7 @@ done:
 #if DB_GFX_TRACE
             if (ms == 20000) { extern void wings64_dump_model_scales(void); wings64_dump_model_scales(); }
 #endif
+            prof_poll(ms);
             if (ms % 1000 == 0) audio_tick(ms, st, seen_flight);
 #if DB_SOAK && WINGS64_AUDIO
             /* wall-clock time: the 250 ms loop counter runs slow against it */

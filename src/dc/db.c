@@ -213,6 +213,23 @@ void db_sd_flush(const char *why) {
     mutex_unlock(&sd_mtx);
 }
 
+/* Whole file next to the log (profiler dumps). Main thread; the card must be up. 0 = written. */
+int db_sd_write_file(const char *name, const void *a, unsigned alen, const void *b, unsigned blen) {
+    char path[64];
+    file_t f;
+    int ok;
+    if (sd_state != SD_UP || irq_inside_int()) return -1;
+    if (mutex_lock_timed(&sd_mtx, 3000) != 0) return -1;
+    snprintf(path, sizeof path, SD_DIR "/%s", name);
+    f = fs_open(path, O_WRONLY | O_CREAT | O_TRUNC);
+    ok = f >= 0 && fs_write(f, a, alen) == (ssize_t)alen && (!blen || fs_write(f, b, blen) == (ssize_t)blen);
+    if (f >= 0) fs_close(f);
+    fs_fat_sync("/sd");
+    if (!ok) sd_err++;
+    mutex_unlock(&sd_mtx);
+    return ok ? 0 : -1;
+}
+
 int db_sd_available(void) { return 1; }
 int db_sd_enabled(void) { return sd_on; }
 void db_sd_set_enabled(int on) {
@@ -240,6 +257,10 @@ const char *db_sd_status(void) {
     }
 }
 #else
+int db_sd_write_file(const char *name, const void *a, unsigned alen, const void *b, unsigned blen) {
+    (void)name; (void)a; (void)alen; (void)b; (void)blen;
+    return -1;
+}
 void db_sd_poll(unsigned int ms) { (void)ms; }
 void db_sd_flush(const char *why) { (void)why; }
 int db_sd_available(void) { return 0; }

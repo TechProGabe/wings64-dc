@@ -55,7 +55,7 @@ The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
 ./run.sh build            # build/wings64.elf
 ./run.sh disc             # build/wings64.cdi      (padding on → CD-R)
 ./run.sh disc --emu       # build/wings64-emu.cdi  (mkdcdisc -N)
-./run.sh hwdisc           # hardware-test CD-R images (wings64.cdi + -dd), FPS monitor + SD log on by default
+./run.sh hwdisc           # hardware-test CD-R images (wings64.cdi + -dd): FPS monitor, SD log, SD profiler (L+R+Start)
 ./run.sh release          # build/wings64-release.cdi (no db.o, NDEBUG)
 ./run.sh test [--ci]      # host tests + tree checks (--ci: no ROM needed)
 ./run.sh run-hw           # no cable: prints the .cdi path to burn + checklist

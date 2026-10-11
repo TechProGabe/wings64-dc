@@ -10,6 +10,7 @@
 | replay oracle | `DB_FDR_HASH`: hash of flight-recorder state per frame while playing the ROM's demo replays; must match between builds and between host and target for physics-adjacent changes | per milestone |
 | emulator gate (`./run.sh smoke`) | containerized Flycast v2.7 (`docker/emu/`, Xvfb, HLE BIOS, composite) boots the `--emu` cdi; serial log must show `WINGS64_M<n>_OK`; `build/emu-shot-{1,2}.png` captured at the marker and +5 s | every milestone exit (maintainer decision 2026-10-10) |
 | hardware | burned CD-R on the retail console: boot, milestone exit criteria, `DB_PERF` numbers via on-screen overlay and `/sd/WINGS64/LOG*.TXT` (SD adapter; no dcload); soak (`DB_SOAK`) 30 min for audio dropouts | per milestone |
+| hardware profile (`DB_PROF`, on in `./run.sh hwdisc`) | PC sampling at the 1 kHz scheduler tick into 16-byte bins over .text (src/dc/prof.c); hold **L + R + Start** (or wait 240 s) and `WINGS64/PROFnnn.BIN` lands on the SD card; `tools/prof/decode_prof.py PROFnnn.BIN <elf>` prints the flat profile (use the ELF saved beside the image) | hardware perf work |
 | hardware evidence format | `kb/state-log.md` entry: date, disc build id, console, video (composite/S-video), SD log file name, what was observed, numbers | always |
 
 ## SD card log (hardware)

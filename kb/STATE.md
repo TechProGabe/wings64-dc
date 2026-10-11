@@ -21,7 +21,8 @@ Updated 2026-10-11 (M4 done: emulator gate + 10-min soak PASS; next: hardware te
 | purity | 202 decomp-flag TUs: no fsrra/fsca/fmac in GCC asm | `make purity` |
 | emulator gate | **PASS** `WINGS64_M0_OK`, screen all green (Flycast v2.7 container, HLE BIOS, composite) | build/emu-shot-2.png |
 | boot load (emulator) | 5.32 MiB in 2881 ms = 1892 KB/s (not hardware; CD-R expected 500 KB/s–1 MB/s) | serial log |
-| fps on hardware | — (target: locked 30) | — |
+| fps on hardware | flight ~23, menus ~18-19, title ~20, results ~38 (target: locked 30); CPU-bound in the DL interpreter (PVR wait 7 us) | hw log 2026-10-11 |
+| DL interpret on hardware (median) | flight 27 ms (max 75), file menu 43, class select 41, title 30, congratulations 69 | `gfx: wait/dl/finish` |
 | gate (`./run.sh gate`) | M3 script, state-relative steps: title -> ... -> flight 108 s -> results 130 s, `WINGS64_M3_OK` + `WINGS64_M4_OK` (timeout 200 s; title waits ~0.9 s per music change since real-time audio) | build/emu-run.mp4 (untracked) |
 | gfx (emulator) | menus ~60 fps; flight per frame (DB_GFX_PROF): conv ~7 ms, emit ~4, vtx ~3.5, state ~5 | `gfx:` log lines |
 | menu load stalls (emulator) | Start game -> file menu ~7 s, file menu -> class select ~5 s of no frames (N64: ~1 s) | `game: t` log lines |
@@ -38,15 +39,16 @@ Screen shows, all green: `crc32 DAFCC147 manifest DAFCC147 match`, `UV files 127
 
 ## Ranked queue
 1. **Frame rate on hardware** (maintainer, first hardware run: 15-20 fps, "needs to be improved").
-   Step 1: SD log from the M4 disc (`gfx: wait/dl/finish` every 30 frames, `game: t` per second) splits the
-   frame into PVR wait (GPU-bound), DL interpretation (SH-4 gfx) and the rest (game logic). Then a
-   DB_GFX_PROF disc for per-phase numbers. Emulator said vtx/state/conv/emit ~3.5/5/7/4 ms; not trusted.
-2. Hardware visual bugs: cylinder under the Rocket Belt pilot (likely the shadow volume, cimg==zimg path),
+   Done: SD log says CPU-bound in the DL interpreter (27 ms flight, 41-43 ms menus; PVR wait 7 us), about
+   27 us per triangle. Next: hardware PC profile (DB_PROF disc, L+R+Start in flight and in a menu) ->
+   tools/prof/decode_prof.py, then cut the top functions. Flycast per-phase timers distort (2x DL).
+2. Hardware visual bugs: cylinder under the Rocket Belt pilot and a big triangle/square under the hang
+   glider (maintainer; likely the shadow draw: cimg==zimg / decal path),
    striped landing-target texture, pilots missing on pilot select, title pilots overlay sized wrong
    (maintainer, 2026-10-11; compare with scripts/n64_oracle.sh frames).
 3. Menu load stalls: 5-7 s with no controller polls after each menu change (N64 ~1 s; maintainer: "super
    laggy" on hardware too); profile the app thread.
-4. SD log on hardware: KOS v2.2.2's SD driver never brought the card up (stuck "probing", card in).
+4. (done on hardware 2026-10-11) SD log: KOS v2.2.2's SD driver never brought the card up (stuck "probing").
    src/dc/kos_sd backports sd.c + scif-spi.c from KOS 1c6398f (OpenCrossing's, proven on this card);
    8.3 names; on-screen "SD <status>" under the FPS counter. Flycast: fails cleanly ("SD FAIL INIT").
 5. Audio fidelity (M5): reverb via AICA DSP (AL_FX_CUSTOM is off), sub-frame parameter timing, PCM8

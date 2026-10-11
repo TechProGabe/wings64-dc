@@ -1,5 +1,15 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — SD log works on hardware (disc deb13bc-1011-2120, NAS wings64-dc-20261011b-sdfix)
+- Maintainer: "Saving works confirmed", screen shows "SD LOG000 TXT": the backported KOS 1c6398f SD stack
+  (src/dc/kos_sd) brings the card up where v2.2.2's stuck at "probing".
+- **First hardware log** (LOG000.TXT, 260 s, 0 dropped, 0 errors; copy kept off-repo): PVR wait ~7 us and
+  finish ~90 us in every state, so the GPU is never the limit; the SH-4 display-list interpreter is.
+  DL ms median/max per state: title 30/52, file menu 43, class select 41, overview/details 27-29/57,
+  flight 27/75, results 13, congratulations 69. FPS (gfx tasks per second): title ~20, menus ~18-19,
+  flight ~23, results ~38. Loads: test setup -> flight 7 s with no frames. Audio: 22.3-22.5 kHz,
+  0 misses, 13 DAC drops in 260 s, alAudioFrame ~80 us avg.
+
 ## 2026-10-11 — first hardware run: M4 hw-test disc (db2e587-1011-1821), maintainer report
 - Boots and plays on a retail console (CD-R; composite). **Audio "sounds really good"** (music + SFX).
 - Frame rate 15-20 fps (hardware; emulator had claimed ~30 in the air / ~20 on the pad).
