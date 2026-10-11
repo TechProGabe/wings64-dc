@@ -269,14 +269,17 @@ DIVERGES format, sh4zam-name lint, purity). Pre-commit runs `./run.sh test --ci`
 | mkdcdisc image rejected by some consoles | low | medium | `-L data-data` variant; cdi4dc fallback |
 | Snap photo framebuffer readback unsupported | medium | low | PVR render-to-texture or DIVERGES |
 
-## 5. Open questions for the maintainer
-1. Is a dcload cable (serial or BBA/IP) available, or is CD-R burning the only
-   hardware path? (Changes `run-hw` and iteration speed.)
-2. VGA box present for 480p testing?
-3. Accept a 6–11 s one-time boot load (ROM-in-RAM) for v0.1, with per-level
-   loading as a later lever?
-4. GCC pin: 14.3.0 (recommended) vs 15.2.0 stable vs 13.2.0 legacy?
-5. Target frame rate for v0.1: locked 30 (N64 parity, safe) or attempt 60 in flight?
+## 5. Maintainer decisions (answered 2026-10-10)
+1. **Hardware path: CD-R only.** No dcload cable. An SD card adapter is available
+   for saving logs: `DB_LOG_SD` knob writes the serial log to `/sd/wings64/log-<buildid>.txt`
+   (kos `-lkosfat`), flushed each frame; on-screen overlay for `DB_PERF` numbers.
+   `run-hw` is therefore "burn this file". Every milestone burns one disc.
+2. **Video: composite/S-video only (480i NTSC).** Render 640x480 interlaced; 480p
+   path stays in code (KOS picks it on VGA) but is untested until a VGA box exists.
+3. **Boot load: ROM-in-RAM accepted** (6–11 s behind a loading screen with progress).
+4. **GCC pin: 14.3.0.** Fallback 13.2.0; 15.2 only as a measured experiment.
+5. **v0.1 frame rate: locked 30 fps** (N64 parity). 60 fps in flight is the M6 stretch.
+6. Console revision unknown → ship both default and `-L data-data` images in M7.
 
 ## 6. Out of scope
 Widescreen, JP/EU versions, mods, 32 MB RAM mod, emulator-specific fixes,

@@ -36,7 +36,7 @@ The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
 ./run.sh disc --emu       # build/wings64-emu.cdi  (mkdcdisc -N)
 ./run.sh release          # build/wings64-release.cdi (no db.o, NDEBUG)
 ./run.sh test [--ci]      # host tests + tree checks (--ci: no ROM needed)
-./run.sh run-hw           # dc-tool push if a cable exists
+./run.sh run-hw           # no cable: prints the .cdi path to burn + checklist
 ./run.sh decomp-refresh   # re-fetch decomp at pin and re-apply patches/
 flycast -config config:Debug.SerialConsoleEnabled=yes build/wings64-emu.cdi
 ```
@@ -52,6 +52,8 @@ with a kill switch and a before/after pair (us/frame from `DB_PERF`, screenshot)
 H1 endianness · H2 Fast3D→PVR fidelity · H3 alSyn→AICA · H4 scheduler semantics ·
 H5 IDO UB + fixed memory map · H6 float determinism · H7 ROM-in-RAM fit/load time.
 
-## Facts that live only in a human's head (ask the maintainer)
-dcload cable availability; VGA box; which console revision (VA0/VA1/VA2 — affects
-`-L data-data`); CD-R brand/speed that boots reliably.
+## Facts that live only in a human's head (answered 2026-10-10)
+- No dcload cable: **CD-R only**. SD card adapter present → logs via `DB_LOG_SD` to `/sd/wings64/`.
+- **Composite/S-video only** (480i). No VGA box yet.
+- Console revision unknown (VA0/1/2) → build both default and `-L data-data` release images.
+- CD-R brand/speed that boots reliably: ask when the first disc is burned; record here.

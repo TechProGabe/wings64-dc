@@ -46,7 +46,10 @@ Per-TU `-O0` quarantine list (`OPT_QUARANTINE_SRC`) exists from day one and star
 ```
 No headless mode; `.elf` loads directly with `-config bios.UseReios=yes`.
 
-## Hardware
-CD-R: burn `build/wings64.cdi` (padding on) with the usual tools (ImgBurn/DiscJuggler-compatible
-burner on the user's side). dcload (`run_hw.sh`: `dc-tool-ser`/`dc-tool-ip -x build/wings64.elf -c disc`)
-only if a cable exists — ask the maintainer.
+## Hardware (decided: CD-R only, composite video, SD card for logs)
+- Burn `build/wings64.cdi` (padding on). No dcload cable exists; `run_hw.sh` just prints the
+  path and a burn checklist.
+- Logs: `DB_LOG_SD=1` mirrors `dbgio` to `/sd/wings64/log-<buildid>.txt` (link `-lkosfat`,
+  mount at boot if present, never required). Flush per frame; cap at 8 MB.
+- Perf numbers on screen (`DB_PERF` overlay) since there is no serial.
+- Video: 480i NTSC on composite/S-video. 480p untested until a VGA box exists.
