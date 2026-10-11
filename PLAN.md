@@ -205,6 +205,8 @@ DIVERGES format, sh4zam-name lint, purity). Pre-commit runs `./run.sh test --ci`
 - Shadow volumes (`cimg==zimg`) → render as PT with depth-only or drop (DIVERGES).
 - `uvCopyFrameBuf` (snap photos) and snow CPU framebuffer writes → PVR texture
   readback or software path; documented DIVERGES if deferred to M5.
+- Hardware instrumentation (decisions 8, 9): SD card log with receipt, crash/assert hook, FPS
+  monitor, title-screen settings menu to switch them.
 - Determinism oracle: play the ROM's demo replays through `fdr.c` on host and on
   target; compare recorded state hashes per frame (`DB_FDR_HASH`).
 
@@ -271,8 +273,8 @@ DIVERGES format, sh4zam-name lint, purity). Pre-commit runs `./run.sh test --ci`
 
 ## 5. Maintainer decisions (answered 2026-10-10)
 1. **Hardware path: CD-R only.** No dcload cable. An SD card adapter is available
-   for saving logs: `DB_LOG_SD` knob writes the serial log to `/sd/wings64/log-<buildid>.txt`
-   (kos `-lkosfat`), flushed each frame; on-screen overlay for `DB_PERF` numbers.
+   for saving logs (see 8): the SD log writes the serial log to `/sd/wings64/log-NNN.txt`
+   (kos `-lkosfat`), synced every 2 s; on-screen overlay for `DB_PERF` numbers.
    `run-hw` is therefore "burn this file". Every milestone burns one disc.
 2. **Video: composite/S-video only (480i NTSC).** Render 640x480 interlaced; 480p
    path stays in code (KOS picks it on VGA) but is untested until a VGA box exists.
@@ -284,6 +286,22 @@ DIVERGES format, sh4zam-name lint, purity). Pre-commit runs `./run.sh test --ci`
    Flycast (`./run.sh smoke`: pinned v2.7 built from source in `docker/emu/`, Xvfb, HLE BIOS,
    composite cable) via serial marker + screenshots. Performance numbers from it are labelled
    "emulator" and are not hardware evidence. CD-R images are still produced by `./run.sh disc`.
+
+8. **(2026-10-11) Hardware test logging = OpenCrossing-Dreamcast's proven SD path.** Every dev
+   build carries the SD log (`src/dc/db.c`); `DB_LOG_SD=1` turns it on at boot, the title-screen
+   settings menu (9) switches it at runtime. Rules carried over from OpenCrossing's hardware runs
+   (`kb/traps.md`): serial-port adapter, SCIF probe only (SCI waits forever with no card); the
+   card owns the serial port, so the console goes silent while it is up; the card comes up after
+   the game loop runs, never at `main()`; one file per boot opened `O_TRUNC` and held open (never
+   `O_APPEND` on fs_fat); `fs_fat_sync` after every write plus a `receipt.txt`; MBR FAT32 with
+   4 KB clusters. A CPU-exception/assert hook (`DB_CRASH`, on in dev builds) writes the faulting
+   thread, PC, registers and stack words to the log and flushes the card. SD images are judged on
+   hardware only (Flycast has no adapter); the crash hook is exercised in Flycast with
+   `DB_CRASH_TEST`. Procedure: `docs/testing.md` "SD card log".
+9. **(2026-10-11) Title-screen settings menu** in the game's own look (fonts, boxes, colours,
+   cursor, sounds of the title's Start game / Option menu): FPS monitor on/off, SD card logging
+   on/off with its status. Settings persist with the save (VMU). Port feature, not a game change;
+   marked `DIVERGES: port settings menu`.
 
 ## 6. Out of scope
 Widescreen, JP/EU versions, mods, 32 MB RAM mod, emulator-specific fixes,

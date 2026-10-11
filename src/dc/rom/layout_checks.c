@@ -20,3 +20,10 @@ _Static_assert(sizeof(UnkPartStruct_Unk8) == 0x14, "UnkPartStruct_Unk8");
 /* SysV/GCC packs this like IDO (0x18) but LSB-first; patches/003 serialises the IDO byte image. */
 _Static_assert(sizeof(Unk8033F050) == 0x18, "Unk8033F050 photo record (patches/003)");
 _Static_assert(sizeof(Bitmap) == PW64_N64_BITMAP_SIZE, "Bitmap is the N64 16-byte record on ILP32");
+
+/* patches/020: camera arrays sized to their real extent must not move the fields after them. */
+_Static_assert(offsetof(UnkStruct_80204D94, unk250) == 0x250, "camera unk250");
+_Static_assert(offsetof(UnkStruct_80204D94, unk298) == 0x298, "camera unk298");
+_Static_assert(offsetof(UnkStruct_80204D94, unk2E0) == 0x2E0, "camera unk2E0");
+_Static_assert(offsetof(UnkStruct_80204D94, unk328) == 0x328, "camera unk328");
+_Static_assert(offsetof(UnkStruct_80204D94, unk370) == 0x370, "camera unk370 (patches/020)");

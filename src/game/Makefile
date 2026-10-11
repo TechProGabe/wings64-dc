@@ -79,9 +79,11 @@ DECOMP_INC := -nostdinc -isystem $(shell $(DECOMP_CC) -print-file-name=include) 
 	-Isrc/dc/decomp -I$(DECOMP) -I$(DECOMP)/src -I$(DECOMP)/include -I$(DECOMP)/include/kernel \
 	-I$(DECOMP)/include/libultra -I$(DECOMP)/include/libultra/PR -I$(DECOMP)/include/libultra/compiler/modern_gcc
 DECOMP_CFLAGS := $(DECOMP_ABI) $(COMMON) -Os -std=gnu11 -funsigned-char -fwrapv -fno-strict-aliasing \
-	-ffp-contract=off -ftrivial-auto-var-init=zero -include src/dc/decomp/wings64_prelude.h \
+	-ffp-contract=off -ftrivial-auto-var-init=zero -fno-aggressive-loop-optimizations -include src/dc/decomp/wings64_prelude.h \
 	$(DECOMP_DEFS) $(DECOMP_INC) -Wno-multichar -Wno-implicit-int -Wno-implicit-function-declaration \
 	-Wno-return-type -Wno-int-conversion -Wno-incompatible-pointer-types $(REL_DEFS)
+# ^ -fno-aggressive-loop-optimizations: the decomp indexes past declared array bounds (IDO-era structs,
+#   patches/020); GCC must not shorten loops from those bounds.
 # ^ ILP32 like the VR4300: decomp int<->pointer casts are lossless on SH-4 (GCC 14 makes them errors).
 DECOMP_OBJ := $(patsubst $(DECOMP)/%.c,$(OBJDIR)/decomp/%.o,$(DECOMP_SRC)) \
 	$(patsubst %.c,$(OBJDIR)/dl/%.o,$(DECOMPLIKE_SRC))

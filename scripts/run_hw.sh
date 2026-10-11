@@ -14,6 +14,7 @@ Checklist for the retail console (composite/S-video, 480i):
   1. Disc boots past the BIOS logo (record console model/revision if visible).
   2. The milestone screen shows the expected lines (see kb/STATE.md for this milestone's exit criteria).
   3. Photograph the screen; note load time and any red line.
-  4. If built with DB_LOG_SD=1 and an SD adapter is attached: copy /sd/wings64/log-<build>.txt.
+  4. SD adapter attached (MBR FAT32, 4 KB clusters) and SD logging on (settings menu or DB_LOG_SD=1):
+     copy /sd/wings64/log-NNN.txt and receipt.txt (docs/testing.md "SD card log").
   5. Record the result in kb/state-log.md (date, build id, console, video, SD log, observations).
 MSG

@@ -64,6 +64,11 @@ int wings64_autoplay(uint32_t poll, uint16_t *buttons, int8_t *sx, int8_t *sy) {
     (void)poll;
     if (nsteps < 0) { parse(); t0 = timer_ms_gettime64(); }
     now = timer_ms_gettime64() - t0;
+    {
+        static uint64_t last;
+        if (last && now - last > 500) db_log("autoplay: poll gap %lu ms at %lu ms\n", (unsigned long)(now - last), (unsigned long)now);
+        last = now;
+    }
     for (int i = 0; i < nsteps; i++) {
         if (now >= steps[i].at && now < (uint64_t)steps[i].at + steps[i].hold) {
             static int logged[64];

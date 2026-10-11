@@ -263,6 +263,9 @@ s32 osPiStartDma(OSIoMesg *mb, s32 pri, s32 dir, u32 devAddr, void *vAddr, u32 n
         /* DIVERGES: audio_tbl (ROM 0x6314D0+) is not in the RAM image; sample DMA reads silence until
            the AICA driver (M4) plays waves itself. */
         kb_memset(vAddr, 0, nbytes);
+        if (devAddr < 0x6314D0u && sPiZeroReads < 64)   /* only audio_tbl may land here; anything else is a bug */
+            kb_log("pi0: unexpected read outside the RAM image: dev %08lx bytes %lu\n", (unsigned long)devAddr,
+                   (unsigned long)nbytes);
         sPiZeroReads++;
     }
     mb->hdr.retQueue = mq;

@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     vid_set_mode(DM_640x480, PM_RGB565);   /* 480i on composite/S-video, 480p on VGA; never 50 Hz */
     dc_pvr_init();
     gpvr_init();
-    db_sd_init();
+    db_init();
     screen_init();
 
     db_log("wings64-dc %s\n", wings64_build_id);
@@ -192,14 +192,17 @@ done:
                 db_log("game: t %u s gfx %u aud %u vi %u pi0 %u\n", ms / 1000, wings64_gfx_tasks(), wings64_aud_tasks(),
                        wings64_vi_retraces(), wings64_pi_zero_reads());
                 if (ms == 5000) db_log("WINGS64_M2_GAMELOOP\n");
-                db_sd_flush();
+#ifdef DB_CRASH_TEST
+                if (ms == 10000) { db_log("db: DB_CRASH_TEST illegal instruction\n"); __asm__ volatile(".word 0xfffd"); }
+#endif
+                db_sd_poll(ms);
             }
         }
     }
     screen_line(ROW_RESULT, ok ? SCREEN_GREEN : SCREEN_RED, "M%d RESULT: %s", WINGS64_MILESTONE, ok ? "PASS" : "FAIL");
     /* M0/M1 gates end here; from M2 the marker comes from the game's own state machine. */
     if (WINGS64_MILESTONE < 2 || !ok) db_log("WINGS64_M%d_%s\n", WINGS64_MILESTONE, ok ? "OK" : "FAIL");
-    db_sd_flush();
+    db_sd_flush("exit");
 
     for (;;) {
         /* Seconds counter: proves video + PVR keep running; text changes force a 1 MB upload. */
@@ -214,7 +217,7 @@ done:
                        wings64_pi_zero_reads());
                 if (last_gfx < 120 && g >= 120) db_log("WINGS64_M2_GAMELOOP\n");
                 last_gfx = g;
-                db_sd_flush();
+                db_sd_poll(frame * 1000u / 60u);
             }
         }
         frame++;

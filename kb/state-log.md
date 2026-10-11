@@ -1,5 +1,23 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — M3 gate PASS (emulator): terrain, sky, SD log
+- Island terrain was never drawn: the camera struct declares the ground view polygon `Vec3F unk328[1]`;
+  GCC 14 cut the loops that write/read its 5 points to one, so tile sub-quad masks came out empty.
+  patches/020 sizes unk250/unk2E0/unk328 to 6 (offsets asserted); decomp TUs add
+  `-fno-aggressive-loop-optimizations`. Terrain, lighthouse, castle, trees now render in flight.
+- Black band under the sky: the cloud strip (PT, combiner alpha 1) used texture alpha. Texture alpha
+  now follows the combiner's alpha texel term.
+- Title screen compared with the maintainer's N64 photo: logo, menu text and pilots match within the
+  photo's overscan crop (~6-9 %).
+- Gate: the stick step at 36 s fell inside a 6 s controller-poll gap after the menu change (the run
+  flew the hang glider); moved to 37 s. Rocket Belt Beginner: test update 65.3 s -> results 85.5 s,
+  `WINGS64_M3_OK`. Flight ~21 fps (emulator) -> the M3 "30 fps min" is open (M6 work or earlier).
+- SD card log rebuilt on OpenCrossing-Dreamcast's hardware-proven path (SCIF probe, console muted while
+  the card owns the serial port, armed 6 s into the game, O_TRUNC + held fd, fs_fat_sync every 2 s,
+  receipt.txt), switchable at runtime. Crash/assert hook verified in Flycast with DB_CRASH_TEST
+  (illegal instruction on the main thread: report logged, thread parked, game threads kept running).
+  SD path itself is unverified until a hardware run.
+
 ## 2026-10-11 — M2 gate PASS (emulator), build ee58e1dd-1011-1259
 - `./run.sh gate` (DB_AUTOPLAY script 8000:S,16000:A,30000:A): state title (500 ms) -> file menu
   (17500 ms, gfx 231) -> vehicle & class select (30250 ms, gfx 488) -> WINGS64_M2_OK. Video:

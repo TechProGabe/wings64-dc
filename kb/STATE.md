@@ -1,13 +1,15 @@
 # STATE — current numbers and the ranked queue
 
-Updated 2026-10-11 (M2 done: emulator gate PASS; paused here).
+Updated 2026-10-11 (M3 gate PASS in emulator; 30 fps not yet met; settings menu in progress).
 
 | metric | value | evidence |
 |---|---|---|
-| milestone | **M2 done** (emulator gate PASS); M3 next | state-log 2026-10-11 M2 |
+| milestone | **M3 gate PASS** (Rocket Belt Beginner hop -> land -> results, emulator); exit's 30 fps not met | state-log 2026-10-11 M3 |
+| flight fps (emulator) | ~21 gfx tasks/s in Rocket Belt flight (gfx 497 -> 924 over 20.3 s); DL ~41 ms/frame | `game:`/`gfx:` log lines |
+| hardware logging | SD card log + receipt + crash/assert hook (`src/dc/db.c`), OpenCrossing-proven SD path; untested on hardware | docs/testing.md "SD card log" |
 | M0 disc | `build/wings64.cdi` build `574fd2b-1011-0141` (705 MB raw, padded, 80-min CD-R) sha256 `fd7fed8e46ec7887…` | `./run.sh disc` |
 | toolchain | image `wings64-dc:ce773e5503b9`: GCC 14.3.0, KOS v2.2.2 `c23410b` (-m4-single-only), mkdcdisc v0.0.4 `2b98b0d` | `docker/pins.env` |
-| decomp pin | `1a8558f`, **16 patches** (3 bitfield, 8 UB, 1 yield, 4 endian; all `WINGS64_DC`-guarded) | `patches/README.md` |
+| decomp pin | `1a8558f`, **20 patches** (3 bitfield, 10 UB, 1 yield, 4 endian, arena, sched; all `WINGS64_DC`-guarded) | `patches/README.md` |
 | sh4zam pin | fork `7747e5d` (v0.9.1), built from source in `src/game/Makefile` | submodule |
 | ROM fs slice | **5,582,256 B (5.32 MiB)**, crc32 `DAFCC147`, 1272 index entries = 1272 UV files, every FORM header verified | `tools/rom/slice_fs.py` |
 | UV file mix | UVTX 463, UVMD 363, UVAN 115, UVBT 102, UVCT 101, UPWT 61, PDAT 25, 3VUE 12, UVFT 9, SPTH 8, UPWL 4, 1 each UVEN/UVLT/UVLV/UVSQ/UVSX/UVSY/UVTP/UVTR/ADAT | slice_fs |
@@ -22,7 +24,7 @@ Updated 2026-10-11 (M2 done: emulator gate PASS; paused here).
 | M2 gate (`./run.sh gate`) | scripted input: title 0.5 s -> file menu 17.5 s -> vehicle & class select 30.3 s, `WINGS64_M2_OK` | build/evidence/m2-gate-emu.mp4 (untracked) |
 | gfx (emulator) | title ~1-2k tris/frame; DL interpretation ~40 ms/frame after per-state combiner fit (was 80) -> ~24 fps; class select ~56 fps | `gfx:` log lines |
 | menu load stalls (emulator) | Start game -> file menu ~7 s, file menu -> class select ~5 s of no frames (N64: ~1 s) | `game: t` log lines |
-| known render gaps | ocean/water draws black (horizon band); menu text and sprites OK | M3 work |
+| known render gaps | none blocking: island terrain, sea, sky + clouds, buildings, pilots render; title matches the N64 reference within capture scale | M3 contact sheets (untracked) |
 | audio waves | music 57 (audio_tbl 0.80 MB VADPCM), SFX 107 (UVSX .TBL 1.43 MB, inside wings64.fs); all ADPCM, no RAW16 | `tools/audio/measure_pool.py` |
 | AICA pool (Yamaha ADPCM) | **1.92 MiB = music 0.71 + SFX 1.21; DOES NOT FIT** resident under 2 MiB − 256 KiB (over by 171 KiB) | measure_pool |
 | waves > 65534 samples | 6 (music 110,432 / 104,224; SFX 77,312 / 81,968 / 110,432 / 85,344) → need streaming or splitting | measure_pool |

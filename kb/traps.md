@@ -110,3 +110,24 @@
   Write PVR_FOG_VERTEX_COLOR (0xA05F80B4) directly. Vertex fog blends toward that register, not the table colour.
 - N64 `Mtx` is two u16 arrays (Mtx_u i[4][4], f[4][4]) written halfword by halfword: on little-endian SH-4
   element e is halfword e. Decoding it as big-endian word halves swaps element pairs (title models mis-scaled).
+- **Arrays declared shorter than the game uses are UB GCC acts on.** The camera struct declares the
+  ground view polygon `Vec3F unk328[1]` and the game writes five points; GCC 14 cut the copy/read
+  loops to one iteration, the polygon read back as zeros and the island terrain was never drawn
+  (only the far sea ring). Fix: patches/020 sizes the arrays to their real extent; decomp TUs also
+  build with `-fno-aggressive-loop-optimizations`. Symptom pattern: geometry the game culls itself.
+- **Combiner alpha without TEXEL0 must not use texture alpha.** The sky cloud strip (CVG_X_ALPHA, PT
+  list) has combiner alpha 1; with `MODULATEALPHA` + texture alpha its transparent texels punched a
+  black band through the sky. `txr_alpha` follows the fitted alpha's texel term.
+- **Controller polls stop for seconds after a menu change** (asset loads): an autoplay stick step of
+  300 ms inside that window is lost. The M3 gate's stick step sits at 37 s, after the poll resumes.
+
+## SD card logging (carried over from OpenCrossing-Dreamcast hardware runs, 2026-10-11)
+- `O_APPEND` on fs_fat: 0x08 lands inside `O_MODE_MASK`; the open succeeds and every write fails
+  with EBADF. Open once with `O_TRUNC`, hold the fd, write sequentially.
+- fs_fat postpones block/inode writes: without `fs_fat_sync`/unmount the file is empty or short.
+- The serial-port adapter turns SCIF into SPI: nothing may write the console while the card is up
+  (`dbgio_disable` before the probe, `dbgio_enable` on failure or switch-off).
+- SCI probe waits for RDRF with no timeout: no card = permanent hang. Default SCIF only.
+- Muting the console at `main()` changed OpenCrossing's boot timing and stopped it booting on
+  hardware: arm the card after the game loop runs.
+- MBR FAT32 with 4 KB clusters; superfloppy cards don't enumerate.

@@ -26,6 +26,7 @@ static uint64_t sT_vtx, sT_state, sT_conv, sT_emit, sT_other;
 static int sTrace;
 static uint32_t sListTris[3], sRejTrivial, sRejCull, sClipped, sVtxLoads;
 static uint32_t sStEmit, sStRej[5], sStCull, sStClip;   /* per draw state: rejects by plane x+,x-,y+,y-,near */
+static int sStDump;   /* per draw state: clipped polygons dumped so far */
 static float sMinW, sMaxW;
 #define TRACE(...) do { if (sTrace) db_log(__VA_ARGS__); } while (0)
 #else
@@ -141,24 +142,12 @@ static void do_mtx(uint32_t w0, uint32_t w1) {
 
 /* --------------------------------------------------------------- vertices */
 
-static void update_lights(void) {
-    for (int i = 0; i < R.num_lights && i < 8; i++) {
-        shz_vec3_t d = shz_vec3_init(R.light_dir[i][0], R.light_dir[i][1], R.light_dir[i][2]);
-        R.light_obj[i] = shz_vec3_normalize_safe(shz_mat4x4_transform_vec3_transpose(&R.mv[R.mv_top], d));
-    }
-    for (int i = 0; i < 2; i++) {
-        shz_vec3_t d = shz_vec3_init(R.lookat[i][0], R.lookat[i][1], R.lookat[i][2]);
-        R.lookat_obj[i] = shz_vec3_normalize_safe(shz_mat4x4_transform_vec3_transpose(&R.mv[R.mv_top], d));
-    }
-    R.lights_dirty = 0;
-}
-
 static void do_vtx(uint32_t w0, uint32_t w1) {
     uint32_t n, v0, len, addr;
     const uint8_t *src;
     f3d_vtx_decode(w0, w1, &n, &v0, &len, &addr);
     src = ram(addr);
-    if (R.lights_dirty && (R.geom & (F3D_G_LIGHTING | F3D_G_TEXTURE_GEN))) update_lights();
+    /* Lights and texgen use eye-space normals per vertex (do_vtx); no per-matrix light update. */
     shz_xmtrx_load_apply_4x4(&R.proj, &R.mv[R.mv_top]);   /* XMTRX = P * MV (N64: MV x P) */
     R.mvp_dirty = 0;
     for (uint32_t i = 0; i < n && v0 + i < 16; i++, src += 16) {
@@ -174,29 +163,35 @@ static void do_vtx(uint32_t w0, uint32_t w1) {
         if (c.w < sMinW) sMinW = c.w;
         if (c.w > sMaxW) sMaxW = c.w;
 #endif
-        if (R.geom & F3D_G_LIGHTING) {
+        if (R.geom & (F3D_G_LIGHTING | F3D_G_TEXTURE_GEN)) {
+            /* Eye-space normal (as Birdman64's pw64-gfx): PW64 never sends lookat vectors or light
+               counts; G_LIGHTING only appears with G_TEXTURE_GEN + DECALRGB (gfx.md). */
             shz_vec3_t nrm = shz_vec3_init((int8_t)cn[0], (int8_t)cn[1], (int8_t)cn[2]);
-            int amb = R.num_lights;
-            float r = R.light_col[amb][0], g = R.light_col[amb][1], b = R.light_col[amb][2];
-            nrm = shz_vec3_normalize_safe(nrm);
-            for (int l = 0; l < R.num_lights && l < 8; l++) {
-                float d = shz_vec3_dot(nrm, R.light_obj[l]);
-                if (d > 0.0f) { r += d * R.light_col[l][0]; g += d * R.light_col[l][1]; b += d * R.light_col[l][2]; }
+            shz_vec3_t nv = shz_vec3_normalize_safe(shz_mat4x4_transform_vec3(&R.mv[R.mv_top], nrm));
+            if (R.geom & F3D_G_LIGHTING) {
+                int amb = R.num_lights;
+                float r = R.light_col[amb][0], g = R.light_col[amb][1], b = R.light_col[amb][2];
+                for (int l = 0; l < R.num_lights && l < 8; l++) {
+                    shz_vec3_t ld = shz_vec3_normalize_safe(shz_vec3_init(R.light_dir[l][0], R.light_dir[l][1], R.light_dir[l][2]));
+                    float d = shz_vec3_dot(nv, ld);
+                    if (d > 0.0f) { r += d * R.light_col[l][0]; g += d * R.light_col[l][1]; b += d * R.light_col[l][2]; }
+                }
+                v->r = r > 255.0f ? 1.0f : r * (1.0f / 255.0f);
+                v->g = g > 255.0f ? 1.0f : g * (1.0f / 255.0f);
+                v->b = b > 255.0f ? 1.0f : b * (1.0f / 255.0f);
+            } else {
+                v->r = cn[0] * (1.0f / 255.0f); v->g = cn[1] * (1.0f / 255.0f); v->b = cn[2] * (1.0f / 255.0f);
             }
-            v->r = r > 255.0f ? 1.0f : r * (1.0f / 255.0f);
-            v->g = g > 255.0f ? 1.0f : g * (1.0f / 255.0f);
-            v->b = b > 255.0f ? 1.0f : b * (1.0f / 255.0f);
             if (R.geom & F3D_G_TEXTURE_GEN) {
-                /* Fast3D texgen: (n . lookat + 1) / 4 of the texture scale (sm64 PC port formula). */
-                float dx = shz_vec3_dot(nrm, R.lookat_obj[0]), dy = shz_vec3_dot(nrm, R.lookat_obj[1]);
-                v->s = (dx + 1.0f) * 0.25f * R.tex_ss * (1.0f / 32.0f);   /* s10.5 -> texels */
-                v->t = (dy + 1.0f) * 0.25f * R.tex_st * (1.0f / 32.0f);
+                /* Spherical env map: (n_eye + 1) / 4 of the texture scale, s10.5 -> texels. */
+                v->s = (nv.x + 1.0f) * 0.25f * R.tex_ss * (1.0f / 32.0f);
+                v->t = (nv.y + 1.0f) * 0.25f * R.tex_st * (1.0f / 32.0f);
             }
         } else {
             v->r = cn[0] * (1.0f / 255.0f); v->g = cn[1] * (1.0f / 255.0f); v->b = cn[2] * (1.0f / 255.0f);
         }
         v->a = cn[3] * (1.0f / 255.0f);
-        if (!((R.geom & F3D_G_LIGHTING) && (R.geom & F3D_G_TEXTURE_GEN))) {
+        if (!(R.geom & F3D_G_TEXTURE_GEN)) {
             v->s = tc[0] * R.tex_ss * (1.0f / 65536.0f) * (1.0f / 32.0f);
             v->t = tc[1] * R.tex_st * (1.0f / 65536.0f) * (1.0f / 32.0f);
         }
@@ -400,6 +395,18 @@ static gpvr_tex_t *texture_for_tile(int tidx) {
     if (pf == PVRFMT_UNSUPPORTED) return NULL;
     pw = texconv_pow2(w); ph = texconv_pow2(h);
     if (pw * ph > 32768) return NULL;
+#if DB_GFX_TRACE
+    {
+        extern int wings64_game_state(void);
+        static int nlog;
+        if (wings64_game_state() == 5 && nlog < 40) {
+            nlog++;
+            db_log("  texup fmt %d siz %d %ux%u dxt %d raw %02x%02x%02x%02x%02x%02x%02x%02x conv %04x %04x %04x %04x\n",
+                   t->fmt, t->siz, w, h, ld->dxt, raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+                   conv[0], conv[1], conv[w / 2], conv[(h / 2) * w + w / 2]);
+        }
+    }
+#endif
     /* Resample (nearest) to pow2 so wrap, mirror and clamp all keep working with u = s / w. */
     for (unsigned y = 0; y < ph; y++)
         for (unsigned x = 0; x < pw; x++)
@@ -423,6 +430,14 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
     memset(st, 0, sizeof *st);
     cc_compile(cycle == 1);
     cc_fit((R.geom & F3D_G_FOG) != 0);
+#ifdef DB_GFX_SOLID
+    /* debug: every triangle opaque, untextured, white -> screen coverage only */
+    memset(st, 0, sizeof *st); st->list = GPVR_OP; st->depth_cmp = PVR_DEPTHCMP_GEQUAL; st->depth_write = 1;
+    st->filter = PVR_FILTER_NEAREST; cur_tex = NULL;
+    sFit.linear = 1;
+    for (int ch = 0; ch < 4; ch++) { sFit.m0[ch] = sFit.mS[ch] = sFit.mA[ch] = sFit.kS[ch] = sFit.kA[ch] = 0.0f; sFit.k0[ch] = 1.0f; }
+    return st->list;
+#endif
     if ((rm & 0x4000) /* FORCE_BL */ && cycle < 2) {
         st->list = GPVR_TR;
         st->blend_src = PVR_BLEND_SRCALPHA;
@@ -457,7 +472,10 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
             st->clamp = ((t->cms & 2) ? PVR_UVCLAMP_U : 0) | ((t->cmt & 2) ? PVR_UVCLAMP_V : 0);
             st->flip = ((t->cms & 1) ? PVR_UVFLIP_U : 0) | ((t->cmt & 1) ? PVR_UVFLIP_V : 0);
             st->env = PVR_TXRENV_MODULATEALPHA;
-            st->txr_alpha = 1;
+            /* Texel alpha only counts when the combiner's alpha output uses it. A combiner with
+               constant or shade alpha (sky cloud strip: alpha = 1 under CVG_X_ALPHA) must not let
+               transparent texels punch holes; PVR then takes alpha from the vertex alone. */
+            st->txr_alpha = (sFit.m0[3] > 1e-4f || sFit.m0[3] < -1e-4f || sFit.mA[3] > 1e-4f || sFit.mA[3] < -1e-4f);
             cur_tex_w = (float)sTexEffW;   /* the texel extent the PVR texture spans (mask/loaded-row clamped) */
             cur_tex_h = (float)sTexEffH;
             cur_uls = t->uls * 0.25f; cur_ult = t->ult * 0.25f;
@@ -509,6 +527,15 @@ static void emit_poly(vtx_t *poly, int n, int textured, int decal) {
     pvr_vertex_t pv[12];
     for (int i = 0; i < n; i++) to_pvr(&poly[i], &pv[i], textured, decal);
     for (int i = 1; i + 1 < n; i++) gpvr_tri_pv(&pv[0], &pv[i], &pv[i + 1]);
+#if DB_GFX_TRACE
+    sListTris[sState.list] += n - 2; sStEmit += n - 2;
+    if (sTrace && sStDump < 6 && sState.depth_cmp == PVR_DEPTHCMP_ALWAYS) {   /* env/sky states: no Z */
+        sStDump++;
+        for (int i = 0; i < n; i++)
+            db_log("      clip-poly v%d x %.1f y %.1f z %.3g argb %08lx oargb %08lx shade %.2f %.2f %.2f %.2f\n", i, pv[i].x, pv[i].y,
+                   pv[i].z, (unsigned long)pv[i].argb, (unsigned long)pv[i].oargb, poly[i].r, poly[i].g, poly[i].b, poly[i].a);
+    }
+#endif
 }
 
 static void do_tri(int ia, int ib, int ic) {
@@ -529,6 +556,9 @@ static void do_tri(int ia, int ib, int ic) {
         if (plane >= 0) {
 #if DB_GFX_TRACE
             sRejTrivial++; sStRej[plane]++;
+            if (sTrace && sStRej[plane] <= 2)
+                db_log("      rej%d v0 %.1f %.1f %.1f %.1f | v1 %.1f %.1f %.1f %.1f | v2 %.1f %.1f %.1f %.1f\n", plane,
+                       v[0]->x, v[0]->y, v[0]->z, v[0]->w, v[1]->x, v[1]->y, v[1]->z, v[1]->w, v[2]->x, v[2]->y, v[2]->z, v[2]->w);
 #endif
             return;
         }
@@ -567,6 +597,7 @@ static void do_tri(int ia, int ib, int ic) {
                    (unsigned long)sStRej[0], (unsigned long)sStRej[1], (unsigned long)sStRej[2], (unsigned long)sStRej[3],
                    (unsigned long)sStRej[4], (unsigned long)sStCull, (unsigned long)sStClip);
         sStEmit = sStRej[0] = sStRej[1] = sStRej[2] = sStRej[3] = sStRej[4] = sStCull = sStClip = 0;
+        sStDump = 0;
 #endif
         draw_state(1, 0, &sState); sStateEpoch = sEpoch;
 #if DB_GFX_TRACE

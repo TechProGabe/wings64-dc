@@ -3,8 +3,20 @@
  * RELEASE=1 builds force DB_ENABLE=0 and drop db.o's optional paths.
  *
  *   DB_ENABLE     master switch for db_log output (serial / dcload console). Default 1, release 0.
- *   DB_LOG_SD     mirror db_log to /sd/wings64/log-<buildid>.txt via the SD card adapter
- *                 (FAT, first MBR partition). Never required; silently off if no card. Default 0.
+ *   DB_LOG_SD     SD log ON AT BOOT (the settings menu can switch it at runtime in any dev build):
+ *                 db_log text is kept in RAM and written to
+ *                 /sd/wings64/log-NNN.txt on a serial-port SD adapter (MBR FAT32, 4 KB clusters).
+ *                 The adapter owns the serial port, so the console goes silent once the card is up.
+ *                 HARDWARE ONLY: Flycast has no adapter and the probe can stall there. Default 0.
+ *                 Procedure: docs/testing.md "SD card log". Lessons: kb/traps.md (SD entries).
+ *   DB_LOG_SD_IF  adapter interface: 0 = SCIF (jj1odm/DreamShell-style, default; a probe always
+ *                 fails cleanly), 1 = SCI (only if you KNOW the reader is SCI: no card = hang).
+ *   DB_LOG_SD_ARM_MS  ms after the game thread starts before the card is brought up (default 6000:
+ *                 after the game loop runs; changing boot-time blocking changes the boot path).
+ *   DB_LOG_SD_SYNC_MS how often the log is written and fs_fat_sync'd (default 2000). Power-off
+ *                 loses at most this much.
+ *   DB_CRASH      CPU-exception and assert hook: registers + stack words to the log, SD flush, halt.
+ *                 Default = DB_ENABLE. DB_CRASH_TEST executes an illegal instruction on the main thread at 10 s to exercise it.
  *   DB_PERF       on-screen per-phase timings (M2+). Default 0.
  *   DB_BOOT_LEVEL skip menus and boot straight into a level (M2+). Default -1 (off).
  *   DB_GFX_TRACE  every 15th frame, log per-list triangle counts and each fill/tex rectangle.
@@ -19,6 +31,20 @@
 #endif
 #ifndef DB_LOG_SD
 #define DB_LOG_SD 0
+#endif
+/* SD log code is in every dev build (the settings menu switches it); DB_LOG_SD only sets it on at boot. */
+#define DB_SD_BUILD DB_ENABLE
+#ifndef DB_LOG_SD_IF
+#define DB_LOG_SD_IF 0
+#endif
+#ifndef DB_LOG_SD_ARM_MS
+#define DB_LOG_SD_ARM_MS 6000
+#endif
+#ifndef DB_LOG_SD_SYNC_MS
+#define DB_LOG_SD_SYNC_MS 2000
+#endif
+#ifndef DB_CRASH
+#define DB_CRASH DB_ENABLE
 #endif
 #ifndef DB_PERF
 #define DB_PERF 0
@@ -46,9 +72,21 @@ void db_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #define db_log(...) ((void)0)
 #endif
 
-/* Mount the SD log (no-op unless DB_LOG_SD). Returns 1 if the SD log is active. */
-int db_sd_init(void);
-/* Push buffered log text to the SD card (no-op unless DB_LOG_SD). Cheap when nothing pending. */
-void db_sd_flush(void);
+/* Boot: install the crash hook (DB_CRASH) and start buffering the log (DB_LOG_SD). The card is NOT
+   probed here; see db_sd_poll. */
+void db_init(void);
+/* Main monitor thread, about once a second: brings the card up at DB_LOG_SD_ARM_MS, then writes
+   and syncs every DB_LOG_SD_SYNC_MS. ms = time since the game thread started. No-op without DB_LOG_SD. */
+void db_sd_poll(unsigned int ms);
+/* Write everything buffered and fs_fat_sync now (bringing the card up first if it is not yet).
+   why ends up in the receipt ("fatal", "crash", "assert", "exit"). No-op without DB_LOG_SD. */
+void db_sd_flush(const char *why);
+/* Runtime switch for the settings menu. available = compiled in (dev builds). set takes effect at the
+   next db_sd_poll; off unmounts the card and gives the serial console back. status is short text for
+   the menu: "off", "starting", "probing", "log-003.txt", "no card", "stopped", "turning off". */
+int db_sd_available(void);
+int db_sd_enabled(void);
+void db_sd_set_enabled(int on);
+const char *db_sd_status(void);
 
 #endif
