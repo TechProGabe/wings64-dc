@@ -1,0 +1,17 @@
+--- a/src/kernel/audio_manager.c
++++ b/src/kernel/audio_manager.c
+@@ -257,7 +257,14 @@
+     task->list.t.dram_stack_size = 0;
+     task->list.t.dram_stack = NULL;
+     uvSc_8022C3C0(0, 0x2C);
++#ifdef WINGS64_DC
++    // DC: the AICA plays the voices (src/dc/audio); the audio command list is a placeholder, so the task
++    // is complete now. Queuing it behind the scheduler's CPU display-list interpretation made this thread
++    // miss retraces.
++    osSendMesg(&__am.audioReplyMsgQ, &info->msg, OS_MESG_NOBLOCK);
++#else
+     osSendMesg(_uvScGetCmdQ(&gSchedInst), &info->task, OS_MESG_BLOCK);
++#endif
+     curAcmdList ^= 1;
+     return 1;
+ }

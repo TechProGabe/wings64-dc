@@ -16,9 +16,12 @@
 #include "rom/romfs.h"
 #include "milestone.h"
 #include "gfx/gfx_pvr.h"
+#include "audio/aica_drv.h"
+#include "audio/aica_synth.h"
 
 #include <kos.h>
 #include <malloc.h>
+#include <string.h>
 #include <sh4zam/shz_sh4zam.h>
 
 #if defined(__SH4__) && SHZ_BACKEND != SHZ_SH4
@@ -48,9 +51,79 @@ void (*volatile wings64_decomp_entry)(void *) = bootproc;
 #define ROW_INDEX 7
 #define ROW_FORM  8
 #define ROW_TAGS  9   /* 9..12 */
+#define ROW_AUDIO 13
 #define ROW_MEM   14
 #define ROW_RESULT 15
 #define ROW_FRAME 17
+
+#ifndef WINGS64_AUDIO
+#define WINGS64_AUDIO 1
+#endif
+#ifndef DB_SOAK
+#define DB_SOAK 0     /* 1: no-input attract-mode soak; WINGS64_M4_SOAK_OK after DB_SOAK_S seconds */
+#endif
+#ifndef DB_SOAK_S
+#define DB_SOAK_S 600
+#endif
+
+/* M4 audio evidence (docs/audio-design.md section 7): the gate cannot hear, so it reads counters. */
+typedef struct {
+    aud_stats_t at_flight;          /* counters when flight starts */
+    int hw_on_menu, hw_on_flight;   /* a snapshot saw AICA channels keyed on */
+    unsigned last_frames, stall_windows, minutes_quiet;
+    unsigned last_starts;
+    unsigned long long last_ai;
+} aud_gate_t;
+static aud_gate_t sAud;
+
+#if WINGS64_AUDIO
+static void audio_tick(unsigned ms, int st, int seen_flight) {
+    aud_stats_t a;
+    unsigned exp, hw, bad;
+    if (!WINGS64_AUDIO || !aud_drv_ready()) return;
+    aud_synth_stats(&a);
+    bad = aud_synth_snapshot(&exp, &hw);
+    if (hw && !seen_flight) sAud.hw_on_menu = 1;
+    if (hw && st == 5) sAud.hw_on_flight = 1;
+    if (ms % 5000 == 0) {
+        unsigned df = a.frames - sAud.last_frames;
+        if (ms > 10000 && df < 270) sAud.stall_windows++;          /* < 90% of 300 audio frames in 5 s */
+        db_log("aud: t %u s frames %u (+%u) starts sfx %u mus %u steals %u clamps %u misses %u on %u/%u hw %u "
+               "mismatch %u peak %u underruns %u rate %lu Hz cpu avg %u max %u us\n", ms / 1000, a.frames, df, a.starts[0], a.starts[1],
+               a.steals, a.clamps, a.misses, a.active, exp, hw, bad, a.peak_active, a.ai_underruns,
+               (unsigned long)((a.ai_samples - sAud.last_ai) / 5), a.us_frames ? a.us_sum / a.us_frames : 0, a.us_max);
+        aud_synth_cpu_reset();
+        sAud.last_frames = a.frames;
+        sAud.last_ai = a.ai_samples;
+    }
+    if (ms % 60000 == 0 && ms) {
+        unsigned st_all = a.starts[0] + a.starts[1];
+        if (st_all == sAud.last_starts) sAud.minutes_quiet++;
+        sAud.last_starts = st_all;
+    }
+}
+
+/* M4 exit, judged when the M3 flight reaches results: music and SFX started in the menus and in flight,
+   AICA channels seen keyed on in both, every wave found, the audio thread never stalled. */
+static int audio_gate(void) {
+    aud_stats_t a;
+    unsigned mus_menu, mus_flight, sfx_all, underrun_pct;
+    aud_synth_stats(&a);
+    mus_menu = sAud.at_flight.starts[1];
+    mus_flight = a.starts[1] - sAud.at_flight.starts[1];
+    sfx_all = a.starts[0];
+    underrun_pct = a.frames ? a.ai_underruns * 100u / a.frames : 100u;
+    db_log("aud: gate music menu %u flight %u, sfx %u, hw on menu %d flight %d, misses %u, stalls %u, "
+           "underruns %u%%\n", mus_menu, mus_flight, sfx_all, sAud.hw_on_menu, sAud.hw_on_flight, a.misses,
+           sAud.stall_windows, underrun_pct);
+    return aud_drv_ready() && mus_menu >= 1 && mus_flight >= 1 && sfx_all >= 20 && sAud.hw_on_menu &&
+           sAud.hw_on_flight && a.misses == 0 && sAud.stall_windows == 0 && underrun_pct <= 2;
+}
+#else
+static void audio_tick(unsigned ms, int st, int seen_flight) { (void)ms; (void)st; (void)seen_flight; }
+static int audio_gate(void) { db_log("aud: WINGS64_AUDIO=0 (silent build)\n"); return 0; }
+#define aud_synth_stats(out) memset((out), 0, sizeof *(out))
+#endif
 
 static void tag_name(uint32_t tag, char out[5]) {
     out[0] = (char)(tag >> 24); out[1] = (char)(tag >> 16); out[2] = (char)(tag >> 8); out[3] = (char)tag; out[4] = 0;
@@ -117,6 +190,15 @@ int main(int argc, char **argv) {
                 (unsigned long)(t_load ? (romfs_size / 1024u) * 1000u / (uint32_t)t_load : 0));
     db_log("romfs: %lu bytes in %lu ms\n", (unsigned long)romfs_size, (unsigned long)t_load);
 
+#if WINGS64_AUDIO
+    {
+        uint64_t ta = timer_ms_gettime64();
+        int aok = aud_drv_init(root) == 0;
+        screen_line(ROW_AUDIO, aok ? SCREEN_GREY : SCREEN_RED, "audio pool %lu KB, %u waves, %lu ms%s",
+                    (unsigned long)(aud_drv_pool_bytes() >> 10), aud_drv_wave_count(),
+                    (unsigned long)(timer_ms_gettime64() - ta), aok ? "" : "  FAILED (silent)");
+    }
+#endif
     crc = romfs_crc32();
     if (meta.valid) {
         int crc_ok = crc == meta.crc32 && romfs_size == meta.size;
@@ -181,12 +263,34 @@ done:
 #endif
                 if (st == 10 && seen_title) seen_file = 1;
                 if (st == 11 && seen_file) db_log("WINGS64_M2_OK\n");
+                if (st == 5 && !seen_flight) aud_synth_stats(&sAud.at_flight);
                 if (st == 5) seen_flight = 1;                                   /* test update = in flight */
-                if (st == 6 && seen_flight) db_log("WINGS64_M3_OK\n");         /* M3: flight -> results */
+                if (st == 6 && seen_flight) {                                   /* M3: flight -> results */
+                    db_log("WINGS64_M3_OK\n");
+                    if (WINGS64_MILESTONE >= 4 && !DB_SOAK) db_log(audio_gate() ? "WINGS64_M4_OK\n" : "WINGS64_M4_FAIL\n");
+                }
                 last = st;
             }
 #if DB_GFX_TRACE
             if (ms == 20000) { extern void wings64_dump_model_scales(void); wings64_dump_model_scales(); }
+#endif
+            if (ms % 1000 == 0) audio_tick(ms, st, seen_flight);
+#if DB_SOAK && WINGS64_AUDIO
+            /* wall-clock time: the 250 ms loop counter runs slow against it */
+            static uint64_t soak_t0;
+            static int soak_done;
+            if (!soak_t0) soak_t0 = timer_ms_gettime64();
+            if (!soak_done && timer_ms_gettime64() - soak_t0 >= DB_SOAK_S * 1000ull) {
+                soak_done = 1;
+                aud_stats_t a;
+                aud_synth_stats(&a);
+                int sok = a.misses == 0 && sAud.stall_windows == 0 && sAud.minutes_quiet == 0 &&
+                          a.starts[0] > 0 && a.starts[1] > 0 && (a.frames ? a.ai_underruns * 100u / a.frames : 100u) <= 2;
+                db_log("aud: soak %u s: frames %u starts sfx %u mus %u misses %u stalls %u quiet minutes %u underruns %u\n",
+                       DB_SOAK_S, a.frames, a.starts[0], a.starts[1], a.misses, sAud.stall_windows, sAud.minutes_quiet,
+                       a.ai_underruns);
+                db_log(sok ? "WINGS64_M4_SOAK_OK\n" : "WINGS64_M4_SOAK_FAIL\n");
+            }
 #endif
             if (ms % 1000 == 0) {
                 db_log("game: t %u s gfx %u aud %u vi %u pi0 %u\n", ms / 1000, wings64_gfx_tasks(), wings64_aud_tasks(),

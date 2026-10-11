@@ -7,7 +7,8 @@ external/ and disc/. Only regular files are checked (no symlinks, no
 submodule directories).
 
 Rules:
-  1. Path rules, case-insensitive: suffix .z64 .n64 .v64 .cdi .iso .gdi .fs, images (.png .jpg ...)
+  1. Path rules, case-insensitive: suffix .z64 .n64 .v64 .cdi .iso .gdi .fs .aud, audio (.wav .raw
+     .aif*), images (.png .jpg ...)
      .bin.scr; basename starting "baserom"; basename 1ST_READ.BIN,
      adpcm_pool.bin, sample_table.bin or wings64.fs; path under disc/ or build/.
      Path rules apply to everything, including external/.
@@ -37,6 +38,8 @@ NAME = "rom_leak_check"
 SELF = Path(__file__).resolve()
 MIB = 1024 * 1024
 BAD_SUFFIXES = (".z64", ".n64", ".v64", ".cdi", ".iso", ".gdi", ".fs", ".bin.scr",
+                # transcoded AICA sample pool (tools/audio/transcode.py) and audio captures
+                ".aud", ".wav", ".raw", ".aif", ".aiff", ".aifc",
                 # screenshots/textures render ROM assets: evidence stays in untracked build/evidence/
                 ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".gif", ".ppm")
 BAD_BASENAMES = {"1st_read.bin", "adpcm_pool.bin", "sample_table.bin", "wings64.fs"}

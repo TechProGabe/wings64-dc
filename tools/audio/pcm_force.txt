@@ -1,0 +1,4 @@
+# pcm_force.txt -- waves the transcoder stores as PCM instead of Yamaha ADPCM (tools/audio/transcode.py).
+# One per line: <bank>:<base> [pcm8|pcm16]   bank = sfx | mus, base = offset in its .TBL (hex ok).
+# Default format pcm8. Use for ADPCM loop clicks or pitch errors heard on hardware
+# (driver log: "aud: clamp wave=" lines). PCM8 doubles the wave's pool bytes; the budget check still applies.

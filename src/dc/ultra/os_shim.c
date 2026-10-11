@@ -315,9 +315,59 @@ u32 wings64_pi_zero_reads(void) { return sPiZeroReads; }
 
 /* ---------------------------------------------------------------------- AI */
 
-s32 osAiSetFrequency(u32 f) { return (s32)f; }
-s32 osAiSetNextBuffer(void *buf, u32 size) { (void)buf; (void)size; return 0; }
-u32 osAiGetLength(void) { return 0; }
+#ifndef WINGS64_AUDIO
+#define WINGS64_AUDIO 1
+#endif
+
+/* DIVERGES: a virtual AI DAC. The AICA plays the voices itself (src/dc/audio), so no sample buffer is
+   ever played; audio_manager.c still paces its frames by the DAC's backlog (frameSamples = frameSize -
+   osAiGetLength + EXTRA_SAMPLES). The DAC drains at the AI rate in wall-clock time, so the players'
+   sample clock, and with it music tempo, tracks real time. A late audio thread finds it overdrawn: the
+   deficit is carried (osAiGetLength reads 0, so the next frames are the longest the manager makes) for up
+   to WINGS64_AUDIO_CATCHUP_MAX frames; beyond that the time is dropped and counted as an underrun. */
+#ifndef WINGS64_AUDIO_CATCHUP_MAX
+#define WINGS64_AUDIO_CATCHUP_MAX 4
+#endif
+static u32 sAiRate = 22050;
+static s32 sAiPending;                 /* samples queued and not yet "played" */
+static s32 sAiQueued;                  /* size of the last queued buffer (the AI's "next" buffer) */
+static u64 sAiLastNs, sAiFrac;
+static u32 sAiUnderruns;
+static u64 sAiSamples;
+
+static void ai_drain(void) {
+    u64 now = kb_time_ns(), n;
+    if (!sAiLastNs) sAiLastNs = now;
+    sAiFrac += (now - sAiLastNs) * sAiRate;
+    sAiLastNs = now;
+    n = sAiFrac / 1000000000ull;
+    sAiFrac -= n * 1000000000ull;
+    sAiPending -= n > 0x10000000ull ? 0x10000000 : (s32)n;
+}
+
+s32 osAiSetFrequency(u32 f) { sAiRate = f; return (s32)f; }
+s32 osAiSetNextBuffer(void *buf, u32 size) {
+    (void)buf;
+    if (!WINGS64_AUDIO) return 0;
+    ai_drain();
+    if (sAiPending < -WINGS64_AUDIO_CATCHUP_MAX * 368) {
+        if (sAiSamples) sAiUnderruns++;
+        sAiPending = 0;
+    }
+    sAiQueued = (s32)(size >> 2);
+    sAiPending += sAiQueued;
+    sAiSamples += size >> 2;
+    return 0;
+}
+u32 osAiGetLength(void) {
+    if (!WINGS64_AUDIO) return 0;
+    ai_drain();
+    /* Like the N64 AI: the length of the buffer playing now, not counting the queued next buffer. */
+    if (sAiPending <= 0) return 0;
+    return (u32)(sAiPending > sAiQueued ? sAiPending - sAiQueued : sAiPending) << 2;
+}
+u32 wings64_ai_underruns(void) { return sAiUnderruns; }
+unsigned long long wings64_ai_samples(void) { return sAiSamples; }
 
 /* ---------------------------------------------------------------------- SI */
 

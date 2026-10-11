@@ -8,49 +8,29 @@
 > for all math. Never commit ROM material. Mark departures `DIVERGES`. Report
 > hardware results, not emulator ones, as evidence.
 
-## Next-run seed prompt (M4 audio, written 2026-10-11)
-> You are executing wings64-dc (~/Documents/GitHub/wings64-dc), a native Dreamcast port of
-> Pilotwings 64 from its decomp. Read `CLAUDE.md`, `kb/RESUME.md`, `PLAN.md` (D6, M4, decisions 7-9),
-> `kb/STATE.md`, `kb/traps.md`. M0-M3 are done in the emulator gate; start **M4 audio**: music + SFX in
-> menus and flight, no dropouts over 10 min (emulator gate; hardware numbers are hypotheses).
->
-> **Step 1, before any audio code: spawn a Fable agent (Agent tool, model "fable") as a design
-> consultant** and give it these facts to rule on: the ADPCM pool is 1.92 MiB (music 0.71 + SFX 1.21,
-> `tools/audio/measure_pool.py`) against ~1.75 MiB of AICA RAM after driver/ring buffers, so it does not
-> fit resident; 6 waves exceed 65534 samples (music 110,432 / 104,224; SFX 77,312 / 81,968 / 110,432 /
-> 85,344); music waves live in audio_tbl (ROM 0x6314D0+, not in the RAM image: PI reads there return
-> zeros today, `src/dc/ultra/os_shim.c`), SFX in UVSX .TBL inside wings64.fs; 16 MB main RAM is tight;
-> the ARM7 is too weak for mixing. Ask it to choose and justify: resident vs paged music (per level or
-> per sequence), streaming vs splitting the long waves, PCM fallback rules for >+1 octave pitch, where
-> audio_tbl lives (RAM image extension vs disc reads at level load), the alSyn voice -> AICA channel
-> mapping and command queue (sm64-dc `aica_synth.c` lineage, `snd_sh4_to_aica`), audio-thread timing
-> against vblank, and a test plan that works in Flycast (the gate cannot hear: log voice starts, wave
-> ids, AICA channel state; record audio in the emulator container if possible). Get its answer as a
-> short design note, write it to `docs/audio-design.md`, then execute it.
->
-> Rules that bind (CLAUDE.md): never commit ROM material, extracted waves, ADPCM pools or recordings;
-> sh4zam for float math, no double, -m4-single-only; never edit the decomp in place (patches/ + .md,
-> WINGS64_DC guards, `DIVERGES:` comments); every optimization has a kill switch; agents don't run git,
-> the main thread commits; releases are local only. Use up to 10 Haiku agents for parallel pieces
-> (wave extraction tool, transcoder, host tests) and Opus agents for large self-contained features.
-> Gate with `./run.sh gate` (state-relative autoplay steps; one emulator at a time; never turn the SD
-> log on in Flycast). End M4 with `./run.sh disc`, kb/STATE.md + kb/state-log.md updates, and a commit.
+## Next-run seed prompt (after the M4 hardware test, written 2026-10-11)
+> You are executing wings64-dc (~/Documents/GitHub/wings64-dc), a native Dreamcast port of Pilotwings 64
+> from its decomp. Read `CLAUDE.md`, `kb/RESUME.md`, `kb/STATE.md`, `kb/traps.md`, `docs/audio-design.md`
+> (amendments at the end). M0-M4 pass in the emulator gate. First take in the maintainer's hardware notes
+> for the M4 disc (kb/state-log.md; SD log `aud: t` lines): fix what hardware showed (audio by ear: loop
+> clicks, high SFX, tempo; boot time) before new work, then continue with the ranked queue (frame rate
+> floor, menu load stalls, M5 parity). Same binding rules as before (CLAUDE.md §1).
 
 ## Where the port is
-**M3 done 2026-10-11 (emulator gate PASS).** Title -> file menu -> class select -> pilot select -> test
-overview/details/setup -> Rocket Belt Beginner flight -> results, driven by `./run.sh gate`
-(`WINGS64_M3_OK`). Flight renders the island terrain, sea, sky with clouds, buildings, pilots and HUD;
-the title matches the N64 reference photo. Frame rate (emulator): ~30 fps in the air, ~20 fps on the
-launch pad (display list ~30 ms/frame); the 30 fps floor everywhere is carried to M6 (kb/STATE.md queue).
-Port features: title-screen **Settings** menu (FPS monitor, SD card log; patches/021, `src/dc/settings.c`),
-SD card log + crash/assert hook for hardware runs (`src/dc/db.c`, docs/testing.md "SD card log").
-**Audio is silent**: no AICA driver yet, sample reads return zeros. **Next: M4 audio** (PLAN.md).
-Paused here by the maintainer.
+**M4 done 2026-10-11 (emulator gate + 10-min soak PASS).** Music and SFX play in menus and flight: the
+decomp's own sequence/sound players drive `src/dc/audio` (alSyn voices -> AICA channels 0-31 via the stock
+KOS firmware), the whole Yamaha ADPCM pool (`disc/wings64.aud`, built by `tools/audio/transcode.py` at
+`./run.sh disc`) sits in AICA RAM, and a virtual AI DAC paces the audio manager in real time
+(docs/audio-design.md). The gate cannot hear: `WINGS64_M4_OK` reads key-on/KEYONB/timing counters
+(`aud: t` lines). `./run.sh soak` runs 600 s of attract mode for `WINGS64_M4_SOAK_OK`.
+M3 facts still hold: Rocket Belt Beginner flight to results via `./run.sh gate`; flight ~30 fps in the air,
+~20 on the launch pad (emulator); Settings menu (FPS monitor, SD log); SD card log + crash hook.
+**Next: the maintainer burns the M4 hardware-test disc** (`./run.sh hwdisc`: FPS monitor + SD log on by
+default; copies live on the Jupiter NAS share under wings64-dc/) (`./run.sh run-hw`
+prints the checklist, audio items included). Hardware is truth; emulator numbers are hypotheses.
 To watch on the Mac: `./run.sh emu` (native Flycast, docs/flycast-macos.md) or `./run.sh play` (VNC).
-Milestones are gated by `./run.sh gate` (containerized Flycast; the maintainer burns no discs).
-Gate scripts use state-relative steps (`s<state>+ms`, src/dc/autoplay.c): menu loads pause controller
-polling for seconds. Run one emulator at a time (two starve the Docker VM). Never turn the SD log on in
-Flycast (the probe stalls the main monitor thread).
+Gate scripts use state-relative steps (`s<state>+ms`, src/dc/autoplay.c) re-armed after >0.5 s poll gaps;
+run one emulator at a time; never turn the SD log on in Flycast.
 
 ## Reference clones used for planning (re-clone when needed; shallow is fine)
 | what | where | pin |
@@ -75,10 +55,12 @@ The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
 ./run.sh build            # build/wings64.elf
 ./run.sh disc             # build/wings64.cdi      (padding on → CD-R)
 ./run.sh disc --emu       # build/wings64-emu.cdi  (mkdcdisc -N)
+./run.sh hwdisc           # hardware-test CD-R images (wings64.cdi + -dd), FPS monitor + SD log on by default
 ./run.sh release          # build/wings64-release.cdi (no db.o, NDEBUG)
 ./run.sh test [--ci]      # host tests + tree checks (--ci: no ROM needed)
 ./run.sh run-hw           # no cable: prints the .cdi path to burn + checklist
 ./run.sh gate             # THE GATE: builds with the milestone's DB_AUTOPLAY script, runs smoke, records video
+./run.sh soak             # M4 audio soak: 600 s attract mode, no input, WINGS64_M4_SOAK_OK
                           #   GATE_CFLAGS=-DDB_GFX_PROF=1 / -DDB_GFX_TRACE=1 / -DDB_CRASH_TEST=1 add debug knobs
 ./run.sh play             # Flycast in the container over VNC -> macOS Screen Sharing (password wings64)
 ./run.sh smoke            # emulator smoke: containerized Flycast, waits for WINGS64_M<n>_OK, screenshots build/emu-shot-*.png

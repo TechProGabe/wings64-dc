@@ -21,6 +21,12 @@
 #include <uv_memory.h>
 #include <libc/stddef.h>
 #include <pw64_endian.h>
+#ifndef WINGS64_AUDIO
+#define WINGS64_AUDIO 1
+#endif
+#if WINGS64_AUDIO
+#include "../audio/aica_synth.h"
+#endif
 
 /* Both ctl files (music 0x4070, SFX 0x67E8 bytes) fit. */
 #define CTL_BUF_SIZE 0x8000
@@ -245,6 +251,9 @@ ALBankFile* pw64_alBnkfLoad(void* src, u32 size, u8* table) {
     sCtlSize = size;
     sMemoCount = 0;
     sTable = table;
+#if WINGS64_AUDIO
+    aud_synth_bank_table(table);   /* the AICA synth maps ALWaveTable bases back to pool entries */
+#endif
     if (rd16(0) != AL_BANK_VERSION) pw64_fail("bad bank revision", rd16(0));
     n = (s16)rd16(2);
     file = alloc((s32)offsetof(ALBankFile, bankArray) + (n > 0 ? n : 1) * (s32)sizeof(ALBank*));

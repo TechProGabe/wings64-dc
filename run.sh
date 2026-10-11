@@ -19,6 +19,13 @@ cmd_disc() { ## build/wings64.cdi (padding on, CD-R); --emu: wings64-emu.cdi (-N
     cmd_build
     $CTR run scripts/make_cdi.sh "$@"
 }
+cmd_hwdisc() { ## hardware-test CD-R images (build/wings64.cdi + -dd): FPS monitor and SD card log on by default
+    # Not for Flycast: the SD probe stalls its main thread (kb/traps.md). The settings menu still switches both.
+    EXTRA_CFLAGS="-DWINGS64_FPS_DEFAULT=1 -DDB_LOG_SD=1 ${EXTRA_CFLAGS:-}" cmd_build
+    $CTR run scripts/make_cdi.sh
+    $CTR run scripts/make_cdi.sh --data-data
+    scripts/run_hw.sh
+}
 cmd_release() { ## build/wings64-release.cdi and -dd variant (no db, NDEBUG). Local only, never CI.
     [ -z "${EXTRA_CFLAGS:-}" ] || { echo "release: unset EXTRA_CFLAGS" >&2; exit 1; }
     cmd_test --ci
@@ -29,7 +36,9 @@ cmd_release() { ## build/wings64-release.cdi and -dd variant (no db, NDEBUG). Lo
 }
 cmd_test() { ## tree checks; without --ci also ROM slice, ILP32 host tests, decomp purity (container)
     scripts/test_tree.sh
+    [ "${1:-}" != --ci ] || python3 -I tools/audio/test_audio.py
     if [ "${1:-}" != --ci ]; then
+        python3 -I tools/audio/test_audio.py --rom
         python3 -I tools/rom/slice_fs.py --quiet
         $CTR run scripts/test_host.sh --rom
         $CTR run make -f src/game/Makefile -j6 purity
@@ -64,7 +73,12 @@ cmd_gate() { ## the milestone gate: build the gate image (scripted input) and ru
     # GATE_CFLAGS: extra debug knobs for a traced gate run, e.g. GATE_CFLAGS=-DDB_GFX_TRACE=1
     EXTRA_CFLAGS="-DDB_AUTOPLAY=1 -DDB_AUTOPLAY_SCRIPT=\"\\\"$script\\\"\" ${GATE_CFLAGS:-}" cmd_build
     $CTR run scripts/make_cdi.sh --emu
-    EMU_RECORD=${EMU_RECORD:-100} scripts/emu_smoke.sh build/wings64-emu.cdi "" 150
+    EMU_RECORD=${EMU_RECORD:-100} scripts/emu_smoke.sh build/wings64-emu.cdi "" 200
+}
+cmd_soak() { ## M4 audio soak: no input for DB_SOAK_S (600) s of title/attract mode, waits for WINGS64_M4_SOAK_OK
+    EXTRA_CFLAGS="-DDB_SOAK=1 ${GATE_CFLAGS:-}" cmd_build
+    $CTR run scripts/make_cdi.sh --emu
+    EMU_RECORD=${EMU_RECORD:-} scripts/emu_smoke.sh build/wings64-emu.cdi WINGS64_M4_SOAK_OK 900
 }
 cmd_smoke() { ## Flycast smoke: boot the emu image, wait for the milestone marker on serial
     scripts/emu_smoke.sh "$@"

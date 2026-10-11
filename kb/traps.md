@@ -143,3 +143,25 @@
   so menu-looking strings must be built from the second set (`src/dc/settings.c` glyphs()).
 - **SD log ON in Flycast:** the SCIF probe can stall the main monitor thread (the gate markers come from it),
   and once it has armed the serial console stays silent. Never leave the SD row ON in an emulator run.
+
+## Paid for in M4 audio (2026-10-11)
+- **VADPCM loop state = the decoded frame holding loopstart** (samples ceil-to-16 of loopstart minus 16 ..
+  that frame end), bit-exact with tools/audio/vadpcm.py. Use it as the decoder oracle.
+- **Looped libaudio waves never play past loop end** (count -1): truncating there shrank the pool enough
+  to keep it all resident (1.77 of 1.81 MiB AICA sample RAM). KOS sample RAM is 0x030000..0x200000.
+- **The N64 resampler clamps pitch at MAX_RATIO 1.99996**: no voice exceeds +1 octave over its wave rate,
+  so the AICA ADPCM ceiling needs no offline pitch analysis.
+- **alAudioFrame must report a non-empty command list.** audio_manager.c only queues the previous frame's
+  AI buffer after a task; *cmdLen 0 freezes the DAC pacing loop.
+- **osAiGetLength is the playing buffer only**, not the queued one; returning the whole backlog drives
+  frameSamples to the minimum and the DAC runs dry every frame.
+- **The audio task must not wait for the scheduler**: the port's scheduler thread interprets display lists
+  on the CPU, so a routed audio task blocks __amMain past retraces (7% frames lost). patches/022.
+- **A stub AI (osAiGetLength = 0) runs the audio clock 1.32x fast** (484 samples per 368-sample frame):
+  anything timed by music (uvaSeqStop's wait for note releases) got shorter in M1-M3 than on an N64.
+- KOS firmware has no volume envelopes (env reg 0x1f): libaudio ramps are SH-4 UPDATE(SET_VOL) steps;
+  AICA `vol` is linear amplitude (the ARM maps it through a log table), libaudio squares its volume first.
+- `snd_sh4_to_aica` never checks for queue space (32 KiB); one channel packet is 96 B, so a full 32-voice
+  frame is ~3 KiB. Batch with snd_sh4_to_aica_stop/start so the ARM sees a frame at once.
+- Yamaha ADPCM on saw-like waves with hard edges sits near 10 dB SNR (step adaptation lags the jump);
+  a beam search buys ~1 dB. PCM8 is the fix, budget permitting.

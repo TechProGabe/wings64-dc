@@ -12,12 +12,12 @@ patches/                 NNN-<reason>.patch + NNN-<reason>.md (why, origin: Bird
 src/dc/decomp/           shadow headers: PR/os.h PR/ultratypes.h macros.h segment_symbols.h libc/*
 src/dc/ultra/            os shim: thread.c mesg.c event.c timer.c pi.c (ROM-in-RAM) vi.c sp.c ai.c si.c eeprom.c mio0.c
 src/dc/gfx/              gfx_f3d.c (interpreter) gfx_pvr.c (backend) gfx_tex.c (import/deswizzle/cache) gfx_cc.c (combiner) clip.c mtx.h
-src/dc/audio/            aica_voice.c (alSyn voice API → AICA) synth_shim.c sample_table.c
+src/dc/audio/            aica_synth.c (alSyn voice API + alAudioFrame → AICA channels) aica_drv.c (pool upload, KOS cmd queue)
 src/dc/rom/              romfs.c (fs image load, filetable walk, swap helpers pw64_swap.c)
 src/dc/input.c  save.c  main.c  db.h  db.c  dcpvr.h  stackguard.c
 src/game/                Makefile: OBJS from external/pw64-decomp (app, kernel, libultra/{audio,sp,gu}) + src/dc
 tools/rom/slice_fs.py    baserom.z64 → disc/wings64.fs (SHA-1 gated)
-tools/audio/             ctl parse, tbl extract, vadpcm decode, yamaha adpcm encode → adpcm_pool.bin, sample_table.bin
+tools/audio/             transcode.py (ctl walk, vadpcm.py decode, yamaha.py encode) → wings64.aud; test_audio.py
 tools/check/             rom_leak_check.py shz_names_check.py diverges_check.py purity (fpu_check.py) vramfence_check.py
 src/dc/test/             host build: hoststubs/ (kos.h, dc/pvr.h, dc/maple.h…), tests, sh4zam SW backend
 disc/                    gitignored outputs: wings64.fs adpcm_pool.bin sample_table.bin disc.id icon.vmi
@@ -27,7 +27,7 @@ build/                   gitignored
 ## Data flow
 ```
 baserom.z64 ──tools/rom/slice_fs.py──► disc/wings64.fs (ROM 0xDE720..0x6314D0, byte-identical)
-baserom.z64 ──tools/audio/*──────────► disc/adpcm_pool.bin + sample_table.bin (Yamaha ADPCM, loop points)
+baserom.z64 ──tools/audio/transcode.py► disc/wings64.aud (wave table + Yamaha ADPCM pool, loop points)
 decomp C + patches + shadows ──kos-cc──► src/game objects ─┐
 src/dc/* ──────────────────────────────────────────────────┼─► build/wings64.elf ──mkdcdisc -d disc/──► build/wings64.cdi
 external/sh4zam (header-only + libsh4zam.a) ───────────────┘

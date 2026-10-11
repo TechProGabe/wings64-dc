@@ -55,6 +55,10 @@ const char *db_sd_status(void);
 #define FLAG_FPS 0x01
 #define FLAG_SD 0x02
 #define BLOCK_VERSION 1
+/* FPS monitor state when the VMU holds no saved settings (./run.sh hwdisc builds hardware-test discs with 1). */
+#ifndef WINGS64_FPS_DEFAULT
+#define WINGS64_FPS_DEFAULT 0
+#endif
 
 static u8 sLoaded;
 static u8 sFlags;          /* persisted FLAG_* */
@@ -67,7 +71,7 @@ static void settings_load(void) {
     unsigned char b[8];
     if (sLoaded) return;
     sLoaded = 1;
-    sFlags = 0;
+    sFlags = WINGS64_FPS_DEFAULT ? FLAG_FPS : 0;
     if (wings64_eeprom_port_read(b) && b[0] == 'W' && b[1] == '6' && b[2] == '4' && b[3] == 'S' &&
         b[4] == BLOCK_VERSION && (u8)(b[5] ^ b[6]) == 0xFF) {
         sFlags = b[5];

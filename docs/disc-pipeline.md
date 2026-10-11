@@ -8,6 +8,7 @@ build/wings64.elf  (kos-cc)
 disc/disc.id       (build stamp; runtime probes it to choose /cd)
 disc/wings64.vmi/.vms icon (optional), disc/README.txt
 disc/fsmeta.txt  (slice manifest: size, crc32, file counts; checked at boot)
+disc/wings64.aud (tools/audio/transcode.py: AICA sample pool, uploaded to sound RAM at boot; docs/audio-design.md)
   └─ mkdcdisc -e build/wings64.elf -D disc -n "Pilotwings 64" -a "wings64-dc" -V WINGS64 -r <YYYYMMDD> -o build/wings64.cdi
      (-D stages the CONTENTS of disc/ at the disc root → /cd/wings64.fs; -d would add a disc/ directory)
      variants:  --emu  → adds -N (no padding; emulator/ODE)

@@ -34,8 +34,19 @@ if [ ! -f disc/wings64.fs ] || [ ! -f disc/fsmeta.txt ] || [ baserom.z64 -nt dis
 fi
 cat build/build-id.txt > disc/disc.id
 
+# AICA sample pool (docs/audio-design.md): transcoded offline from the ROM's music and SFX banks.
+aud_src="tools/audio/transcode.py tools/audio/vadpcm.py tools/audio/yamaha.py tools/audio/pcm_force.txt"
+stale=0
+[ -f disc/wings64.aud ] || stale=1
+for f in baserom.z64 $aud_src; do
+    if [ "$f" -nt disc/wings64.aud ]; then stale=1; fi
+done
+if [ $stale = 1 ]; then
+    python3 -I tools/audio/transcode.py --out disc/wings64.aud
+fi
+
 # Manifest: nothing but known outputs may ride on the disc.
-allowed="disc.id wings64.fs fsmeta.txt"
+allowed="disc.id wings64.fs fsmeta.txt wings64.aud"
 for f in disc/*; do
     n=$(basename "$f")
     case " $allowed " in *" $n "*) ;; *) echo "make_cdi: unexpected file disc/$n (not in manifest)" >&2; exit 1 ;; esac

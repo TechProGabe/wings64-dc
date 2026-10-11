@@ -3,8 +3,8 @@
 **wings64-dc** — native Sega Dreamcast port of Pilotwings 64 (N64), built from
 the `gcsmith/Pilotwings64Decomp` matching decomp on KallistiOS with **sh4zam**.
 Target: **retail Dreamcast, stock 16 MB**, SH-4 @ 200 MHz, PowerVR CLX2, AICA.
-Output: a ready-to-burn `.cdi`. Status: **M3 done (emulator PASS); paused; M4 audio next** — an
-executing LLM starts at `kb/RESUME.md`.
+Output: a ready-to-burn `.cdi`. Status: **M4 done (emulator PASS: music + SFX); hardware test of the M4
+disc next** — an executing LLM starts at `kb/RESUME.md`.
 
 This file is an index plus the rules that must never be violated. It carries no
 status narrative: state lives in `kb/STATE.md`, the handoff in `kb/RESUME.md`.
@@ -63,6 +63,7 @@ VMU ≈ 100 KB user data (PW64 save is 0x208 bytes). CD-R ≈ 500 KB/s–1 MB/s.
 | `docs/architecture.md` | the decided layering and data flow, directory layout to create |
 | `docs/toolchain.md` | pins, container, native fallback, commands |
 | `docs/disc-pipeline.md` | ROM slice → disc/ → mkdcdisc → .cdi; emulator vs CD-R variants |
+| `docs/audio-design.md` | M4 audio: AICA pool + alSyn voice driver, rulings and the amendments measured in M4 |
 | `docs/testing.md` | host tests, oracles, tree checks, hardware procedure |
 | `docs/sh4zam-brief.md` | sh4zam quick reference (build, modules, identifiers) |
 | `docs/rom-provenance.md` | ROM identity and where it lives |

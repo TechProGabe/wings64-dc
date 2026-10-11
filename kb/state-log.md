@@ -1,5 +1,35 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — M4 done (emulator): music + SFX on the AICA
+- Design consult first (Fable agent): docs/audio-design.md; amendments from execution at its end.
+- `tools/audio/transcode.py` (vadpcm.py + yamaha.py): 164 waves -> disc/wings64.aud, 1,860,032 B. Looped
+  waves truncated at loop end (libaudio never plays the tail), 5 over-length waves decimated to 11025 Hz,
+  so the whole pool fits AICA sample RAM (1,900,544 B; 32 KiB headroom): no music paging. VADPCM decode
+  bit-exact against every ALADPCMloop.state; Yamaha SNR median 24.5 dB, worst 10.3 dB (saw-like wave).
+- `src/dc/audio`: alSyn voice API + alAudioFrame re-implemented on AICA channels 0-31 (stock KOS
+  firmware, one command batch per audio frame); libaudio synthesizer/RSP filter TUs excluded from the
+  build. Virtual AI DAC in os_shim.c paces the audio manager in wall-clock time with deficit carry.
+- patches/022: the audio task completes at once; routed through the scheduler it waited behind CPU
+  display-list work and the audio thread lost 7% of retraces (18% DAC drops, ~20.4 kHz). After: 300
+  frames / 5 s, 22.0-22.3 kHz, 0 drops. Raising the audio thread priority (200) measured nothing; kept 110.
+- Gate (`./run.sh gate`, timeout 150 -> 200 s): WINGS64_M3_OK + WINGS64_M4_OK. Music key-ons 2194 in
+  menus / 462 in flight, SFX 25, AICA KEYONB set in both, 0 misses, 0 stall windows, alAudioFrame
+  27-80 us/frame avg. Kill switch `-DWINGS64_AUDIO=0` builds and runs (silent M3 path).
+- Title is ~14 s slower to the file menu under the same script: uvaSeqStop now waits ~0.9 s for note
+  releases at music changes (real-time audio clock; M3's stub AI ran it 1.32x fast), and autoplay re-arms
+  after >0.5 s poll gaps. Control run (no patch 022, silent) reproduced the old 21 s; silent + patch 022
+  reproduced the new 35 s.
+- Soak (`./run.sh soak`, attract mode, no input, 600 s wall clock): WINGS64_M4_SOAK_OK; 35,820 audio
+  frames, music 11,687 / SFX 157 key-ons, 0 misses, 0 stall windows, 13 DAC drops (0.04%), 22.2 kHz.
+  Flycast sound captured (EMU_AUDIO=1, SDL disk driver, 613 s): -15..-26 dBFS while playing, 0 clipped
+  samples. Silences line up with the game: 7-11 s at every demo setup -> flight level load (driver shows
+  0 voices requested) and ~1.5 s at title music changes; none while voices were keyed.
+- Hardware staging (maintainer: "ship it with fps and logging enabled by default"): `./run.sh hwdisc`
+  builds build/wings64.cdi + wings64-dd.cdi with WINGS64_FPS_DEFAULT=1 (FPS monitor on when the VMU holds
+  no settings; checked in Flycast) and DB_LOG_SD=1 (SD log from boot; never in Flycast images). Copies go
+  to the maintainer's NAS share (wings64-dc/). `./run.sh run-hw` checklist has the audio listening items.
+  Untested on hardware: ADPCM loop latching, pool upload time on CD-R, loudness balance, SD log here.
+
 ## 2026-10-11 — M3 done (emulator), settings menu, perf
 - Combiner compile + fit cached per (cc0, cc1, cycle, fog, prim, env): fit 15 -> 0.4 ms per flight frame;
   per-triangle state compare skipped via gpvr_state_serial; u/v scale folded per state. Flight ~21 ->

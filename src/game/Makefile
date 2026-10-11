@@ -58,6 +58,17 @@ DECOMPLIKE_SRC := src/dc/rom/pw64_audio_load.c src/dc/rom/pw64_rom_structs.c src
 	src/dc/ultra/ultra_data.c src/dc/rom/layout_checks.c src/dc/ultra/os_shim.c \
 	src/dc/ultra/game_probe.c src/dc/settings.c
 
+# M4 audio (docs/audio-design.md): libaudio's synthesizer and its RSP filter chain are replaced by
+# src/dc/audio (alSyn voices -> AICA channels). EXTRA_CFLAGS=-DWINGS64_AUDIO=0 builds the silent M3 path.
+SYNTH_REPLACED := synthesizer synallocvoice synfreevoice synstartvoice synstartvoiceparam synstopvoice \
+	synsetpitch synsetvol synsetpan synsetfxmix synsetpriority synallocfx syndelete env load resample \
+	mainbus auxbus reverb filter save drvrnew
+ifeq ($(filter -DWINGS64_AUDIO=0,$(EXTRA_CFLAGS)),)
+DECOMP_SRC := $(filter-out $(patsubst %,$(DECOMP)/src/libultra/audio/%.c,$(SYNTH_REPLACED)),$(DECOMP_SRC))
+DECOMPLIKE_SRC += src/dc/audio/aica_synth.c
+PORT_SRC += src/dc/audio/aica_drv.c
+endif
+
 # Per-TU -O0 quarantine (GCC miscompile evidence goes in kb/traps.md). Starts empty.
 OPT_QUARANTINE_SRC :=
 

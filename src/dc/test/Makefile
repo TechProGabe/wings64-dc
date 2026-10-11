@@ -20,7 +20,8 @@ SHZ_SRC  := $(SHZ)/source/shz_matrix.c $(SHZ)/source/shz_quat.c $(SHZ)/source/sh
 SHZ_DEFS := -DSHZ_BACKEND=SHZ_SW -DSHZ_TLS_MODEL=SHZ_TLS_DISABLED -I$(SHZ)/include
 COMMON   := -O1 -g -MMD -MP -ffunction-sections -fdata-sections
 DECOMP_DEFS := -D_LANGUAGE_C -DVERSION_US -DBUILD_VERSION=VERSION_D -D_FINALROM -DNDEBUG -DTARGET_N64 \
-	-DNON_MATCHING -DAVOID_UB -DRECOMP_BUILD -DWINGS64_DC -DWINGS64_HOSTTEST
+	-DNON_MATCHING -DAVOID_UB -DRECOMP_BUILD -DWINGS64_DC -DWINGS64_HOSTTEST -DWINGS64_AUDIO=0
+# ^ WINGS64_AUDIO=0: the host links libaudio's own synthesizer (the AICA driver is target-only).
 DECOMP_INC := -nostdinc -isystem $(shell $(HOST_CC) -print-file-name=include) \
 	-Isrc/dc/decomp -I$(DECOMP) -I$(DECOMP)/src -I$(DECOMP)/include -I$(DECOMP)/include/kernel \
 	-I$(DECOMP)/include/libultra -I$(DECOMP)/include/libultra/PR -I$(DECOMP)/include/libultra/compiler/modern_gcc
