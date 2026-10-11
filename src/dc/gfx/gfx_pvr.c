@@ -18,7 +18,8 @@ static uint8_t *vbuf[3];
 static const pvr_list_t list_id[3] = { PVR_LIST_OP_POLY, PVR_LIST_PT_POLY, PVR_LIST_TR_POLY };
 static gpvr_state_t cur[3];
 static int cur_valid[3];
-static int active = 0;           /* list of the current state */
+int gpvr_active = 0;             /* list of the current state (read by gpvr_tri_pv_inline) */
+#define active gpvr_active
 uint32_t gpvr_state_serial;      /* bumped whenever the active list or its header may have changed */
 static size_t used[3], cap[3];
 
@@ -27,11 +28,11 @@ static size_t used[3], cap[3];
    32-byte record, instead of a stack copy plus pvr_list_prim's memcpy (which also read-allocated every
    output line). The written amount is handed to KOS once per list at frame end.
    Kill switch: -DWINGS64_DIRECT_EMIT=0 (pvr_list_prim path). */
-#ifndef WINGS64_DIRECT_EMIT
-#define WINGS64_DIRECT_EMIT 1
-#endif
 #if WINGS64_DIRECT_EMIT
-static uint8_t *wbase[3], *wp[3], *wend[3];
+static uint8_t *wbase[3];
+uint8_t *gpvr_wp[3], *gpvr_wend[3];       /* write pointer / limit per list (gfx_pvr.h inline emitter) */
+#define wp gpvr_wp
+#define wend gpvr_wend
 #endif
 
 void gpvr_init(void) {
@@ -79,15 +80,7 @@ void gpvr_fog_color(uint32_t argb) {
 }
 
 #if WINGS64_DIRECT_EMIT
-/* One 32-byte record into the list: allocate the line (no read of stale RAM), then eight word stores. */
-static inline void put32(uint8_t *dst, const void *src) {
-    const uint32_t *s = src;
-    uint32_t *d = (uint32_t *)dst;
-    shz_dcache_alloc_line(d);
-    d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
-    d[4] = s[4]; d[5] = s[5]; d[6] = s[6]; d[7] = s[7];
-}
-
+#define put32 gpvr_put32
 static void emit(int list, const void *data, size_t n) {
     const uint8_t *src = data;
     if (wp[list] + n > wend[list]) { gpvr_stats.overflow++; return; }

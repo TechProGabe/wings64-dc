@@ -46,6 +46,42 @@ void gpvr_fog_color(uint32_t argb);
 /* Same, from ready PVR vertices (flags are set here). */
 void gpvr_tri_pv(const pvr_vertex_t *a, const pvr_vertex_t *b, const pvr_vertex_t *c);
 
+typedef struct { uint32_t tris, state_changes, tex_uploads, tex_hits, overflow, resets; } gpvr_stats_t;
+extern gpvr_stats_t gpvr_stats;
+
+/* docs/fps-plan.md change 1: direct emit into this frame's half of the list's DMA vertex buffer, one
+   allocated cache line per 32-byte record. Kill switch -DWINGS64_DIRECT_EMIT=0. The inline triangle writer
+   lets the interpreter keep its whole per-triangle path in one hot section (change 2). */
+#ifndef WINGS64_DIRECT_EMIT
+#define WINGS64_DIRECT_EMIT 1
+#endif
+#if WINGS64_DIRECT_EMIT
+#include <sh4zam/shz_mem.h>
+extern uint8_t *gpvr_wp[3], *gpvr_wend[3];
+extern int gpvr_active;
+static inline void gpvr_put32(uint8_t *dst, const void *src) {
+    const uint32_t *s = (const uint32_t *)src;
+    uint32_t *d = (uint32_t *)dst;
+    shz_dcache_alloc_line(d);
+    d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
+    d[4] = s[4]; d[5] = s[5]; d[6] = s[6]; d[7] = s[7];
+}
+static inline void gpvr_tri_pv_inline(const pvr_vertex_t *a, const pvr_vertex_t *b, const pvr_vertex_t *c) {
+    uint8_t *d = gpvr_wp[gpvr_active];
+    if (d + 96 > gpvr_wend[gpvr_active]) { gpvr_stats.overflow++; return; }
+    gpvr_put32(d, a);
+    gpvr_put32(d + 32, b);
+    gpvr_put32(d + 64, c);
+    ((pvr_vertex_t *)d)->flags = PVR_CMD_VERTEX;
+    ((pvr_vertex_t *)(d + 32))->flags = PVR_CMD_VERTEX;
+    ((pvr_vertex_t *)(d + 64))->flags = PVR_CMD_VERTEX_EOL;
+    gpvr_wp[gpvr_active] = d + 96;
+    gpvr_stats.tris++;
+}
+#else
+#define gpvr_tri_pv_inline gpvr_tri_pv
+#endif
+
 /* Texture cache: key = (address, format word, size, content sample). Returns VRAM texture or NULL. */
 typedef struct {
     uint32_t addr, fmtkey, sample;
@@ -59,7 +95,5 @@ gpvr_tex_t *gpvr_tex_insert(uint32_t addr, uint32_t fmtkey, uint32_t sample, con
                             unsigned w, unsigned h, uint32_t pvr_fmt);
 void gpvr_tex_reset(void);   /* level load / VRAM pressure: drop every texture (after a fence) */
 
-typedef struct { uint32_t tris, state_changes, tex_uploads, tex_hits, overflow, resets; } gpvr_stats_t;
-extern gpvr_stats_t gpvr_stats;
 
 #endif

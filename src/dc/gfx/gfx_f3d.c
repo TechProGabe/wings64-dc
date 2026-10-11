@@ -53,6 +53,23 @@ static float sMinW, sMaxW;
 /* docs/fps-plan.md change 5. WINGS64_OUTCODES: plane tests once per vertex in do_vtx, AND/OR per triangle.
    WINGS64_MVP_LAZY: XMTRX = P * MV is reloaded only after a matrix change, not on every G_VTX (only do_mtx
    and do_vtx touch XMTRX on this thread; KOS saves the XF bank on context switches). */
+/* docs/fps-plan.md change 2 (I-cache layout; payoff on hardware only: the SH-4 I-cache is 8 KB direct-mapped
+   and the per-triangle path aliased itself). HOT functions share one section, so they link contiguously;
+   rare paths (clipping, lighting, texture uploads, rectangles, matrices) are kept out of line.
+   Kill switch: -DWINGS64_HOT_LAYOUT=0. */
+#ifndef WINGS64_HOT_LAYOUT
+#define WINGS64_HOT_LAYOUT 1
+#endif
+#if WINGS64_HOT_LAYOUT
+#define HOT __attribute__((section(".text.hot.gfx")))
+#define COLD __attribute__((noinline, cold))
+#define OUTLINE __attribute__((noinline))
+#else
+#define HOT
+#define COLD
+#define OUTLINE
+#endif
+
 #ifndef WINGS64_OUTCODES
 #define WINGS64_OUTCODES 1
 #endif
@@ -138,7 +155,7 @@ static void mtx_from_n64(shz_mat4x4_t *out, const void *m) {
         out->elem[e] = (float)(((int32_t)ip[e] << 16) | (int32_t)fp[e]) * (1.0f / 65536.0f);
 }
 
-static void do_mtx(uint32_t w0, uint32_t w1) {
+static OUTLINE void do_mtx(uint32_t w0, uint32_t w1) {
     shz_mat4x4_t m __attribute__((aligned(8))), tmp __attribute__((aligned(8)));
     uint8_t p = (w0 >> 16) & 0xFF;
     mtx_from_n64(&m, ram(w1));
@@ -165,7 +182,34 @@ static void do_mtx(uint32_t w0, uint32_t w1) {
 
 /* --------------------------------------------------------------- vertices */
 
-static void do_vtx(uint32_t w0, uint32_t w1) {
+/* Lighting and spherical texgen (rare in PW64: G_LIGHTING only with G_TEXTURE_GEN + DECALRGB, gfx.md). */
+static COLD void vtx_lit(vtx_t *v, const uint8_t *cn) {
+        /* Eye-space normal (as Birdman64's pw64-gfx): PW64 never sends lookat vectors or light
+           counts; G_LIGHTING only appears with G_TEXTURE_GEN + DECALRGB (gfx.md). */
+        shz_vec3_t nrm = shz_vec3_init((int8_t)cn[0], (int8_t)cn[1], (int8_t)cn[2]);
+        shz_vec3_t nv = shz_vec3_normalize_safe(shz_mat4x4_transform_vec3(&R.mv[R.mv_top], nrm));
+        if (R.geom & F3D_G_LIGHTING) {
+            int amb = R.num_lights;
+            float r = R.light_col[amb][0], g = R.light_col[amb][1], b = R.light_col[amb][2];
+            for (int l = 0; l < R.num_lights && l < 8; l++) {
+                shz_vec3_t ld = shz_vec3_normalize_safe(shz_vec3_init(R.light_dir[l][0], R.light_dir[l][1], R.light_dir[l][2]));
+                float d = shz_vec3_dot(nv, ld);
+                if (d > 0.0f) { r += d * R.light_col[l][0]; g += d * R.light_col[l][1]; b += d * R.light_col[l][2]; }
+            }
+            v->r = r > 255.0f ? 1.0f : r * (1.0f / 255.0f);
+            v->g = g > 255.0f ? 1.0f : g * (1.0f / 255.0f);
+            v->b = b > 255.0f ? 1.0f : b * (1.0f / 255.0f);
+        } else {
+            v->r = cn[0] * (1.0f / 255.0f); v->g = cn[1] * (1.0f / 255.0f); v->b = cn[2] * (1.0f / 255.0f);
+        }
+        if (R.geom & F3D_G_TEXTURE_GEN) {
+            /* Spherical env map: (n_eye + 1) / 4 of the texture scale, s10.5 -> texels. */
+            v->s = (nv.x + 1.0f) * 0.25f * R.tex_ss * (1.0f / 32.0f);
+            v->t = (nv.y + 1.0f) * 0.25f * R.tex_st * (1.0f / 32.0f);
+        }
+}
+
+static HOT void do_vtx(uint32_t w0, uint32_t w1) {
     uint32_t n, v0, len, addr;
     const uint8_t *src;
     f3d_vtx_decode(w0, w1, &n, &v0, &len, &addr);
@@ -202,29 +246,7 @@ static void do_vtx(uint32_t w0, uint32_t w1) {
         if (c.w > sMaxW) sMaxW = c.w;
 #endif
         if (R.geom & (F3D_G_LIGHTING | F3D_G_TEXTURE_GEN)) {
-            /* Eye-space normal (as Birdman64's pw64-gfx): PW64 never sends lookat vectors or light
-               counts; G_LIGHTING only appears with G_TEXTURE_GEN + DECALRGB (gfx.md). */
-            shz_vec3_t nrm = shz_vec3_init((int8_t)cn[0], (int8_t)cn[1], (int8_t)cn[2]);
-            shz_vec3_t nv = shz_vec3_normalize_safe(shz_mat4x4_transform_vec3(&R.mv[R.mv_top], nrm));
-            if (R.geom & F3D_G_LIGHTING) {
-                int amb = R.num_lights;
-                float r = R.light_col[amb][0], g = R.light_col[amb][1], b = R.light_col[amb][2];
-                for (int l = 0; l < R.num_lights && l < 8; l++) {
-                    shz_vec3_t ld = shz_vec3_normalize_safe(shz_vec3_init(R.light_dir[l][0], R.light_dir[l][1], R.light_dir[l][2]));
-                    float d = shz_vec3_dot(nv, ld);
-                    if (d > 0.0f) { r += d * R.light_col[l][0]; g += d * R.light_col[l][1]; b += d * R.light_col[l][2]; }
-                }
-                v->r = r > 255.0f ? 1.0f : r * (1.0f / 255.0f);
-                v->g = g > 255.0f ? 1.0f : g * (1.0f / 255.0f);
-                v->b = b > 255.0f ? 1.0f : b * (1.0f / 255.0f);
-            } else {
-                v->r = cn[0] * (1.0f / 255.0f); v->g = cn[1] * (1.0f / 255.0f); v->b = cn[2] * (1.0f / 255.0f);
-            }
-            if (R.geom & F3D_G_TEXTURE_GEN) {
-                /* Spherical env map: (n_eye + 1) / 4 of the texture scale, s10.5 -> texels. */
-                v->s = (nv.x + 1.0f) * 0.25f * R.tex_ss * (1.0f / 32.0f);
-                v->t = (nv.y + 1.0f) * 0.25f * R.tex_st * (1.0f / 32.0f);
-            }
+            vtx_lit(v, cn);
         } else {
             v->r = cn[0] * (1.0f / 255.0f); v->g = cn[1] * (1.0f / 255.0f); v->b = cn[2] * (1.0f / 255.0f);
         }
@@ -358,7 +380,7 @@ static void cc_fit(int fogging) {
 }
 
 /* Evaluate the compiled combiner for one vertex: out[ch] = texel*m + k for ch = r,g,b,a. */
-static void combine(const vtx_t *v, int fogging, lin_t out[4]) {
+static COLD void combine(const vtx_t *v, int fogging, lin_t out[4]) {
     lin_t comb[4] = { { 0, 0 } }, prev[4];
     for (int cy = 0; cy < sCC.cycles; cy++) {
         const uint8_t *s = sCC.rgb[cy], *sa = sCC.a[cy];
@@ -452,7 +474,7 @@ static struct { uint32_t frame, addr, fmtkey; gpvr_tex_t *gt; uint16_t w, h; } s
 static uint32_t sTexFrame = 1;
 #endif
 
-static gpvr_tex_t *texture_for_tile(int tidx) {
+static COLD gpvr_tex_t *texture_for_tile(int tidx) {
     /* TMEM is 4 KB: at most 8192 texels (4-bit) per load; PVR textures go up to 1024 wide. */
     static uint8_t raw[8192] __attribute__((aligned(32)));
     static uint16_t conv[16384] __attribute__((aligned(32)));
@@ -542,7 +564,7 @@ static float shift_scale(int sh) {
 
 /* ------------------------------------------------------------- draw state */
 
-static int draw_state(int textured_possible, int depth_override_always, gpvr_state_t *st) {
+static OUTLINE int draw_state(int textured_possible, int depth_override_always, gpvr_state_t *st) {
     uint32_t rm = R.oml;
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
     int zb = (R.geom & F3D_G_ZBUFFER) && !depth_override_always;
@@ -609,7 +631,7 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
 
 /* --------------------------------------------------------------- triangles */
 
-static void to_pvr(const vtx_t *v, pvr_vertex_t *o, int textured, int decal) {
+static HOT void to_pvr(const vtx_t *v, pvr_vertex_t *o, int textured, int decal) {
     lin_t c[4];
     float iw = shz_invf(v->w);
     if (sFit.linear) {
@@ -645,7 +667,7 @@ static void lerp_vtx(vtx_t *o, const vtx_t *a, const vtx_t *b, float t) {
 
 static void lerp_vtx(vtx_t *o, const vtx_t *a, const vtx_t *b, float t);
 
-static void emit_poly(vtx_t *poly, int n, int textured, int decal) {
+static COLD void emit_poly(vtx_t *poly, int n, int textured, int decal) {
     pvr_vertex_t pv[12];
     for (int i = 0; i < n; i++) to_pvr(&poly[i], &pv[i], textured, decal);
     for (int i = 1; i + 1 < n; i++) gpvr_tri_pv(&pv[0], &pv[i], &pv[i + 1]);
@@ -660,7 +682,55 @@ static void emit_poly(vtx_t *poly, int n, int textured, int decal) {
 #endif
 }
 
-static void do_tri(int ia, int ib, int ic) {
+/* Sutherland-Hodgman in clip space against near (z + w >= 0) and the x/y guard-band planes; few
+   triangles need it, so it lives out of line. */
+static COLD void clip_tri(vtx_t *const v[3], int textured, int decal) {
+#ifdef DB_GFX_NO_CULL
+    const uint32_t cullmask = 0;
+#else
+    const uint32_t cullmask = F3D_G_CULL_FRONT | F3D_G_CULL_BACK;
+#endif
+    vtx_t bufA[12], bufB[12], *in = bufA, *out = bufB, *tmp;
+    int n = 3;
+#if DB_GFX_TRACE
+    sClipped++; sStClip++;
+#endif
+    for (int i = 0; i < 3; i++) in[i] = *v[i];
+    for (int plane = 0; plane < 5 && n >= 3; plane++) {
+        int m = 0;
+        for (int i = 0; i < n; i++) {
+            vtx_t *a = &in[i], *b = &in[(i + 1) % n];
+            float da, db;
+            switch (plane) {
+            case 0: da = a->z + a->w; db = b->z + b->w; break;                       /* near */
+            case 1: da = GUARD * a->w - a->x; db = GUARD * b->w - b->x; break;       /* x <= G w */
+            case 2: da = GUARD * a->w + a->x; db = GUARD * b->w + b->x; break;       /* x >= -G w */
+            case 3: da = GUARD * a->w - a->y; db = GUARD * b->w - b->y; break;       /* y <= G w */
+            default: da = GUARD * a->w + a->y; db = GUARD * b->w + b->y; break;      /* y >= -G w */
+            }
+            if (da >= 0.0f) out[m++] = *a;
+            if ((da >= 0.0f) != (db >= 0.0f) && m < 12) lerp_vtx(&out[m++], a, b, da / (da - db));
+        }
+        n = m; tmp = in; in = out; out = tmp;
+    }
+    out = in;
+    if (n < 3) return;
+    for (int i = 0; i < n; i++) if (out[i].w < 1e-5f) out[i].w = 1e-5f;
+    if (R.geom & cullmask) {
+        /* Clipped polygon: all w > 0 now, so the NDC area sign is the true orientation. */
+        float area = 0.0f;
+        for (int i = 0; i < n; i++) {
+            int j = (i + 1) % n;
+            area += (out[i].x / out[i].w) * (out[j].y / out[j].w) - (out[j].x / out[j].w) * (out[i].y / out[i].w);
+        }
+        /* Same convention as the unclipped path: cross = -det, i.e. -2*area here. */
+        if ((R.geom & F3D_G_CULL_BACK) && -area >= 0.0f) return;
+        if ((R.geom & F3D_G_CULL_FRONT) && -area <= 0.0f) return;
+    }
+    emit_poly(out, n, textured, decal);
+}
+
+static HOT void do_tri(int ia, int ib, int ic) {
     vtx_t *v[3] = { &R.vc[ia], &R.vc[ib], &R.vc[ic] };
     int textured, decal;
     /* DIVERGES: with the colour image pointed at the z-buffer (cimg == zimg) the game writes depth only
@@ -762,54 +832,14 @@ static void do_tri(int ia, int ib, int ic) {
         for (int i = 0; i < 3; i++)
             if (v[i]->pv_epoch != sEpoch) { to_pvr(v[i], &v[i]->pv, textured, decal); v[i]->pv_epoch = sEpoch; }
         sT_conv += TNOW() - t; t = TNOW();
-        gpvr_tri_pv(&v[0]->pv, &v[1]->pv, &v[2]->pv);
+        gpvr_tri_pv_inline(&v[0]->pv, &v[1]->pv, &v[2]->pv);
         sT_emit += TNOW() - t;
 #if DB_GFX_TRACE
         sListTris[sState.list]++; sStEmit++;
 #endif
         return;
     }
-    {
-        /* Sutherland-Hodgman in clip space against near (z + w >= 0) and the x/y guard-band planes. */
-        vtx_t bufA[12], bufB[12], *in = bufA, *out = bufB, *tmp;
-        int n = 3;
-#if DB_GFX_TRACE
-        sClipped++; sStClip++;
-#endif
-        for (int i = 0; i < 3; i++) in[i] = *v[i];
-        for (int plane = 0; plane < 5 && n >= 3; plane++) {
-            int m = 0;
-            for (int i = 0; i < n; i++) {
-                vtx_t *a = &in[i], *b = &in[(i + 1) % n];
-                float da, db;
-                switch (plane) {
-                case 0: da = a->z + a->w; db = b->z + b->w; break;                       /* near */
-                case 1: da = GUARD * a->w - a->x; db = GUARD * b->w - b->x; break;       /* x <= G w */
-                case 2: da = GUARD * a->w + a->x; db = GUARD * b->w + b->x; break;       /* x >= -G w */
-                case 3: da = GUARD * a->w - a->y; db = GUARD * b->w - b->y; break;       /* y <= G w */
-                default: da = GUARD * a->w + a->y; db = GUARD * b->w + b->y; break;      /* y >= -G w */
-                }
-                if (da >= 0.0f) out[m++] = *a;
-                if ((da >= 0.0f) != (db >= 0.0f) && m < 12) lerp_vtx(&out[m++], a, b, da / (da - db));
-            }
-            n = m; tmp = in; in = out; out = tmp;
-        }
-        out = in;
-        if (n < 3) return;
-        for (int i = 0; i < n; i++) if (out[i].w < 1e-5f) out[i].w = 1e-5f;
-        if (R.geom & cullmask) {
-            /* Clipped polygon: all w > 0 now, so the NDC area sign is the true orientation. */
-            float area = 0.0f;
-            for (int i = 0; i < n; i++) {
-                int j = (i + 1) % n;
-                area += (out[i].x / out[i].w) * (out[j].y / out[j].w) - (out[j].x / out[j].w) * (out[i].y / out[i].w);
-            }
-            /* Same convention as the unclipped path: cross = -det, i.e. -2*area here. */
-            if ((R.geom & F3D_G_CULL_BACK) && -area >= 0.0f) return;
-            if ((R.geom & F3D_G_CULL_FRONT) && -area <= 0.0f) return;
-        }
-        emit_poly(out, n, textured, decal);
-    }
+    clip_tri(v, textured, decal);
 }
 
 /* ------------------------------------------------------------- rectangles */
@@ -866,7 +896,7 @@ static void rect_colors(int textured, uint32_t *argb, uint32_t *oargb) {
 #endif
 }
 
-static void do_fillrect(uint32_t w0, uint32_t w1) {
+static OUTLINE void do_fillrect(uint32_t w0, uint32_t w1) {
     uint16_t lrx, lry, ulx, uly;
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
     gpvr_state_t st;
@@ -891,7 +921,7 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
     DIRTY();
 }
 
-static void do_texrect(uint32_t w0, uint32_t w1) {
+static OUTLINE void do_texrect(uint32_t w0, uint32_t w1) {
     uint16_t xl, yl, xh, yh;
     uint8_t tile;
     int16_t s, t, dsdx, dtdy;
@@ -940,7 +970,7 @@ static void do_texrect(uint32_t w0, uint32_t w1) {
 
 static uint32_t sUnknown[256];
 
-static void run_dl(const uint32_t *pc) {
+static HOT void run_dl(const uint32_t *pc) {
     const uint32_t *stack[DL_DEPTH];
     int sp = 0;
     for (;;) {
@@ -1058,7 +1088,7 @@ static int sInit;
 static uint32_t sFrames;
 
 
-void gfx_f3d_run(const void *dl) {
+HOT void gfx_f3d_run(const void *dl) {
     if (!sInit) {
         sInit = 1;
         R.vp_sx = 160.0f; R.vp_sy = 120.0f; R.vp_tx = 160.0f; R.vp_ty = 120.0f;
