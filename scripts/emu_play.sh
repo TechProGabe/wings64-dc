@@ -12,6 +12,7 @@ img=$("$ROOT/scripts/ctr.sh" emu-tag)
 docker rm -f wings64-play >/dev/null 2>&1 || true
 docker run -d --name wings64-play -p 127.0.0.1:5900:5900 -v "$ROOT:/work" -w /work -e HOME=/tmp \
     --user "$(id -u):$(id -g)" "$img" bash -c '
+    ulimit -c 0
     Xvfb :99 -screen 0 640x480x24 -nolisten tcp >/dev/null 2>&1 &
     export DISPLAY=:99
     for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done

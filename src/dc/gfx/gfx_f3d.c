@@ -24,7 +24,8 @@ static uint64_t sT_vtx, sT_state, sT_conv, sT_emit, sT_other;
 
 #if DB_GFX_TRACE
 static int sTrace;
-static uint32_t sListTris[3];
+static uint32_t sListTris[3], sRejTrivial, sRejCull, sClipped, sVtxLoads;
+static float sMinW, sMaxW;
 #define TRACE(...) do { if (sTrace) db_log(__VA_ARGS__); } while (0)
 #else
 #define TRACE(...) ((void)0)
@@ -158,6 +159,11 @@ static void do_vtx(uint32_t w0, uint32_t w1) {
         shz_vec4_t c = shz_xmtrx_transform_vec4(shz_vec4_init(ob[0], ob[1], ob[2], 1.0f));
         v->x = c.x; v->y = c.y; v->z = c.z; v->w = c.w;
         v->pv_epoch = 0;
+#if DB_GFX_TRACE
+        sVtxLoads++;
+        if (c.w < sMinW) sMinW = c.w;
+        if (c.w > sMaxW) sMaxW = c.w;
+#endif
         if (R.geom & F3D_G_LIGHTING) {
             shz_vec3_t nrm = shz_vec3_init((int8_t)cn[0], (int8_t)cn[1], (int8_t)cn[2]);
             int amb = R.num_lights;
@@ -487,8 +493,12 @@ static void do_tri(int ia, int ib, int ic) {
         (v[0]->y > v[0]->w && v[1]->y > v[1]->w && v[2]->y > v[2]->w) ||
         (v[0]->y < -v[0]->w && v[1]->y < -v[1]->w && v[2]->y < -v[2]->w) ||
         (v[0]->z > v[0]->w && v[1]->z > v[1]->w && v[2]->z > v[2]->w) ||
-        (v[0]->z < -v[0]->w && v[1]->z < -v[1]->w && v[2]->z < -v[2]->w))
+        (v[0]->z < -v[0]->w && v[1]->z < -v[1]->w && v[2]->z < -v[2]->w)) {
+#if DB_GFX_TRACE
+        sRejTrivial++;
+#endif
         return;
+    }
     /* Fast3D culling: sign of the NDC area, flipped for each negative w. That equals the sign of the
        homogeneous determinant |x y w| (no divisions); Fast3D's cross is its negative. */
     if (R.geom & (F3D_G_CULL_FRONT | F3D_G_CULL_BACK)) {
@@ -496,6 +506,9 @@ static void do_tri(int ia, int ib, int ic) {
                   - v[0]->y * (v[1]->x * v[2]->w - v[2]->x * v[1]->w)
                   + v[0]->w * (v[1]->x * v[2]->y - v[2]->x * v[1]->y);
         float cross = -det;
+#if DB_GFX_TRACE
+        if (((R.geom & F3D_G_CULL_BACK) && cross >= 0.0f) || ((R.geom & F3D_G_CULL_FRONT) && cross <= 0.0f)) sRejCull++;
+#endif
         if ((R.geom & F3D_G_CULL_BACK) && cross >= 0.0f) return;
         if ((R.geom & F3D_G_CULL_FRONT) && cross <= 0.0f) return;
     }
@@ -521,6 +534,9 @@ static void do_tri(int ia, int ib, int ic) {
     {
         /* Near clip against z + w >= 0 (Sutherland-Hodgman, one plane). */
         vtx_t in[3], out[8];
+#if DB_GFX_TRACE
+        sClipped++;
+#endif
         int n = 0;
         for (int i = 0; i < 3; i++) in[i] = *v[i];
         for (int i = 0; i < 3; i++) {
@@ -770,11 +786,15 @@ void gfx_f3d_run(const void *dl) {
 #if DB_GFX_TRACE
     sTrace = (sFrames % 15) == 0;
     sListTris[0] = sListTris[1] = sListTris[2] = 0;
+    sRejTrivial = sRejCull = sClipped = sVtxLoads = 0;
+    sMinW = 1e30f; sMaxW = -1e30f;
     TRACE("trace frame %lu\n", (unsigned long)sFrames);
 #endif
     run_dl(dl);
 #if DB_GFX_TRACE
-    TRACE("  tris op %lu pt %lu tr %lu\n", (unsigned long)sListTris[0], (unsigned long)sListTris[1], (unsigned long)sListTris[2]);
+    TRACE("  tris op %lu pt %lu tr %lu | rej %lu cull %lu clip %lu vtx %lu w %.3g..%.3g\n", (unsigned long)sListTris[0],
+          (unsigned long)sListTris[1], (unsigned long)sListTris[2], (unsigned long)sRejTrivial, (unsigned long)sRejCull,
+          (unsigned long)sClipped, (unsigned long)sVtxLoads, sMinW, sMaxW);
 #endif
     t2 = timer_us_gettime64();
     gpvr_frame_end();

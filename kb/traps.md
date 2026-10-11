@@ -103,3 +103,8 @@
   gate scripts use wide gaps.
 - Screenshots/videos render ROM assets: never commit them (rom_leak_check rejects images).
 - Official macOS Flycast crashes here; see docs/flycast-macos.md (`./run.sh play` = VNC workaround).
+
+## Paid for in M3 (2026-10-11)
+- KOS v2.2.2 `pvr_fog_vertex_color()` is `assert_msg(0, "not implemented")`: it aborts, the console
+  reboots, and under Flycast's HLE BIOS the second boot panics ("couldn't find a runnable thread").
+  Write PVR_FOG_VERTEX_COLOR (0xA05F80B4) directly. Vertex fog blends toward that register, not the table colour.

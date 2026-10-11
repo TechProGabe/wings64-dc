@@ -20,6 +20,7 @@ docker image inspect "$img" >/dev/null 2>&1 || { echo "emu_smoke: image $img mis
 rm -f "$ROOT"/build/emu-serial.log "$ROOT"/build/emu-shot-*.png "$ROOT"/build/emu-t*.png
 
 docker run --rm -v "$ROOT:/work" -w /work -e HOME=/tmp -e EMU_SHOTS="${EMU_SHOTS:-}" -e EMU_RECORD="${EMU_RECORD:-}" --user "$(id -u):$(id -g)" "$img" bash -c '
+    ulimit -c 0
     cdi=$1 marker=$2 timeout=$3
     log=build/emu-serial.log
     Xvfb :99 -screen 0 800x600x24 -nolisten tcp >/dev/null 2>&1 &

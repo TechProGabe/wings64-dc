@@ -11,7 +11,14 @@
 ## Where the port is
 M2 done 2026-10-11 (emulator gate PASS): the game boots on KOS threads, renders title/file menu/class
 select through the Fast3D->PVR interpreter, and takes controller input. **Paused here by the maintainer.**
-Next: **M3** (`PLAN.md` §2): bump `src/dc/milestone.h` to 3 and extend `./run.sh gate`'s script.
+**M3 in progress (2026-10-11).** Flow already reaches flight and results with scripted input
+(class select -> r -> A x4: pilot select 3, test overview 12, test details 2, test setup 4, test update 5,
+results 6 ~24 s later with no stick). Fixed: vertex fog colour (KOS stub asserted -> reboot).
+OPEN: in flight everything below the horizon is black (terrain, vehicle) and pilot select is black;
+title-screen terrain renders. Not the BG plane depth (zclip 0). Next step: run the DB_GFX_TRACE build
+(trace prints per-frame tris op/pt/tr | rej cull clip vtx w-range) with the script in kb/STATE.md and
+read a state-5 frame; suspects: trivial reject/clip planes with large outdoor w, depth, culling sign.
+Still to do for M3: bump `src/dc/milestone.h` to 3, gate script to results, 30 fps (emulator).
 To watch on the Mac: `./run.sh play` (VNC; docs/flycast-macos.md). Milestones are gated by
 `./run.sh smoke` (containerized Flycast; maintainer burns no discs). Host macOS Flycast is broken
 (`kb/traps.md`); always use the container.

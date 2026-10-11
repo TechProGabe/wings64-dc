@@ -43,7 +43,14 @@ void gpvr_frame_end(void) {
     pvr_scene_finish();
 }
 
+/* Vertex fog (PVR_FOG_VERTEX) blends toward the VERTEX fog colour register, not the table one. */
 void gpvr_fog_color(uint32_t argb) {
+    static uint32_t last = 0xFFFFFFFFu;
+    if (argb == last) return;
+    last = argb;
+    /* KOS v2.2.2's pvr_fog_vertex_color() is an assert("not implemented") stub (kb/traps.md): write the
+       vertex fog colour register directly, and the table colour too. */
+    PVR_SET(PVR_FOG_VERTEX_COLOR, 0xFF000000u | (argb & 0xFFFFFFu));
     pvr_fog_table_color(1.0f, ((argb >> 16) & 0xFF) / 255.0f, ((argb >> 8) & 0xFF) / 255.0f, (argb & 0xFF) / 255.0f);
 }
 

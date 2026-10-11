@@ -31,6 +31,10 @@ Updated 2026-10-11 (M2 done: emulator gate PASS; paused here).
 Screen shows, all green: `crc32 DAFCC147 manifest DAFCC147 match`, `UV files 1272 (index 1272, manifest 1272)`,
 `FORM headers ok 1272/1272 walk end 618B6C`, `M0 RESULT: PASS`, and the `alive N s` counter keeps ticking.
 
+## M3 exploration script (DB_AUTOPLAY_SCRIPT)
+`8000:S:200,16000:A:200,32000:A:200,40000:r:200,46000:A:200,54000:A:200,62000:A:200,70000:A:200`
+(wide gaps; with DB_GFX_TRACE the game runs slower). States logged by main.c as `state: N (name)`.
+
 ## Ranked queue
 1. M3 one mission playable (Rocket Belt Beginner A to results, 30 fps): bump `src/dc/milestone.h` to 3,
    extend `./run.sh gate` with a state-11 -> test-setup -> test-update -> results script.
