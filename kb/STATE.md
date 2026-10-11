@@ -37,15 +37,18 @@ Screen shows, all green: `crc32 DAFCC147 manifest DAFCC147 match`, `UV files 127
 `FORM headers ok 1272/1272 walk end 618B6C`, `M0 RESULT: PASS`, and the `alive N s` counter keeps ticking.
 
 ## Ranked queue
-1. **Hardware test of the M4 disc** (`./run.sh hwdisc`: FPS monitor + SD log on; maintainer burns
-   `wings64.cdi` or `-dd` from the NAS copy; `./run.sh run-hw` checklist):
-   boot + load time, audio by ear (loop clicks, high-pitched SFX, tempo), 10 min attract mode, SD log.
-   Hypotheses to confirm: AICA ADPCM loops latch decoder state at loopstart; pool upload time on CD-R.
-2. Frame rate to a 30 fps floor (M6, or earlier if cheap): launch-pad view ~30 ms DL in the emulator.
-   Biggest phases: vertex conversion to PVR (~7 ms), emit (~4), vertex transform (~3.5). Measure on
-   hardware before deep work (Flycast timing is not hardware).
-3. Menu load stalls: 5-7 s with no controller polls after each menu change (N64 ~1 s); profile the app thread.
-4. Hardware run when the maintainer burns one: SD log + receipt, FPS monitor numbers (docs/testing.md).
+1. **Frame rate on hardware** (maintainer, first hardware run: 15-20 fps, "needs to be improved").
+   Step 1: SD log from the M4 disc (`gfx: wait/dl/finish` every 30 frames, `game: t` per second) splits the
+   frame into PVR wait (GPU-bound), DL interpretation (SH-4 gfx) and the rest (game logic). Then a
+   DB_GFX_PROF disc for per-phase numbers. Emulator said vtx/state/conv/emit ~3.5/5/7/4 ms; not trusted.
+2. Hardware visual bugs: cylinder under the Rocket Belt pilot (likely the shadow volume, cimg==zimg path),
+   striped landing-target texture, pilots missing on pilot select, title pilots overlay sized wrong
+   (maintainer, 2026-10-11; compare with scripts/n64_oracle.sh frames).
+3. Menu load stalls: 5-7 s with no controller polls after each menu change (N64 ~1 s; maintainer: "super
+   laggy" on hardware too); profile the app thread.
+4. SD log on hardware: KOS v2.2.2's SD driver never brought the card up (stuck "probing", card in).
+   src/dc/kos_sd backports sd.c + scif-spi.c from KOS 1c6398f (OpenCrossing's, proven on this card);
+   8.3 names; on-screen "SD <status>" under the FPS counter. Flycast: fails cleanly ("SD FAIL INIT").
 5. Audio fidelity (M5): reverb via AICA DSP (AL_FX_CUSTOM is off), sub-frame parameter timing, PCM8
    for waves that sound bad on hardware.
 6. (done) M0-M4.

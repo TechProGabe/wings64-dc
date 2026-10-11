@@ -15,7 +15,7 @@ Checklist for the retail console (composite/S-video, 480i):
   2. The milestone screen shows the expected lines (see kb/STATE.md for this milestone's exit criteria).
   3. Photograph the screen; note load time and any red line.
   4. SD adapter attached (MBR FAT32, 4 KB clusters); hwdisc images log to SD from boot (settings menu switches it):
-     copy /sd/wings64/log-NNN.txt and receipt.txt (docs/testing.md "SD card log").
+     copy /sd/WINGS64/LOGNNN.TXT and RECEIPT.TXT (docs/testing.md "SD card log").
   5. Audio (M4, docs/audio-design.md; the emulator gate cannot hear, so these are the first real checks):
      a. Boot screen line "audio pool 1816 KB, 164 waves": note the boot time it adds (~2 s in Flycast).
      b. Title music within ~2 s of the title; menu cursor/select SFX; the ~1 s pause at title music

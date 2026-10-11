@@ -275,7 +275,7 @@ static s32 panel_update(void) {
 }
 
 /* SD logger state under the menu while it is switched on (or still shutting down), in the menu's font
-   and item colour: "SD card  Probing", "SD card  log-003.txt". It changes on the main thread
+   and item colour: "SD card  Probing", "SD card  LOG003.TXT". It changes on the main thread
    (db_sd_poll), so it is rebuilt every frame. Sentence case like the game's text, file names as is. */
 static void panel_draw_status(void) {
     static s16 line[ROW_CAP];
@@ -372,9 +372,24 @@ void wings64_settings_frame(void) {
 #ifdef WINGS64_SETTINGS_FONT_DUMP
     font_dump();
 #endif
+    x = D_80362690 != NULL && D_80362690->state == GAME_STATE_TEST_UPDATE ? FPS_X_FLIGHT : FPS_X_CORNER;
+    /* SD log state under the counter while logging is on ("SD PROBE INIT", "SD FAIL MOUNT", "SD LOG000 TXT"):
+       the console is muted during the card bring-up, so on hardware the screen is the only witness. */
+    if (db_sd_enabled()) {
+        char sd[28];
+        const char *st = db_sd_status();
+        s32 i;
+        sd[0] = 'S'; sd[1] = 'D'; sd[2] = ' ';
+        for (i = 0; st[i] != '\0' && i < 24; i++) {
+            char c = st[i];
+            sd[3 + i] = c >= 'a' && c <= 'z' ? (char)(c - 32) : (c == '.' ? ' ' : c);
+        }
+        sd[3 + i] = '\0';
+        /* right-aligned (~8 px per glyph): from the counter's x a long status runs off the 320 px screen */
+        uvFontOverlayStr_dc(3, MAX(8, 312 - (3 + i) * 8), SCREEN_HEIGHT - FPS_TOP - 30, 0xFF, 0xFF, 0x00, sd);
+    }
     if (!(sFlags & FLAG_FPS) || sFps == 0) return;
     uvSprintf(str, "%d", (int)sFps);
-    x = D_80362690 != NULL && D_80362690->state == GAME_STATE_TEST_UPDATE ? FPS_X_FLIGHT : FPS_X_CORNER;
     numX = x;
     /* y is the glyph bottom, counted up from the screen bottom (uvFontPrintStr) */
     if (uvFontOverlayStr_dc(3, x, SCREEN_HEIGHT - FPS_TOP - 11, 0xFF, 0xFF, 0x00, "FPS")) numX += 26;

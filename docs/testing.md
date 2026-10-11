@@ -9,7 +9,7 @@
 | audio gate + soak (emulator) | the gate cannot hear, so `WINGS64_M4_OK` reads counters at the flight -> results point: music key-ons in menus and flight, >= 20 SFX key-ons, AICA KEYONB seen set in both, 0 wave misses, 0 audio-thread stall windows (< 270 frames per 5 s), virtual-DAC drops <= 2%; `./run.sh soak` (`DB_SOAK`): 600 s of title/attract mode with no input, `WINGS64_M4_SOAK_OK` when key-ons keep coming every minute and the same counters hold. `aud: t` lines every 5 s carry the numbers | M4 exit; any audio change |
 | replay oracle | `DB_FDR_HASH`: hash of flight-recorder state per frame while playing the ROM's demo replays; must match between builds and between host and target for physics-adjacent changes | per milestone |
 | emulator gate (`./run.sh smoke`) | containerized Flycast v2.7 (`docker/emu/`, Xvfb, HLE BIOS, composite) boots the `--emu` cdi; serial log must show `WINGS64_M<n>_OK`; `build/emu-shot-{1,2}.png` captured at the marker and +5 s | every milestone exit (maintainer decision 2026-10-10) |
-| hardware | burned CD-R on the retail console: boot, milestone exit criteria, `DB_PERF` numbers via on-screen overlay and `/sd/wings64/log-*.txt` (SD adapter; no dcload); soak (`DB_SOAK`) 30 min for audio dropouts | per milestone |
+| hardware | burned CD-R on the retail console: boot, milestone exit criteria, `DB_PERF` numbers via on-screen overlay and `/sd/WINGS64/LOG*.TXT` (SD adapter; no dcload); soak (`DB_SOAK`) 30 min for audio dropouts | per milestone |
 | hardware evidence format | `kb/state-log.md` entry: date, disc build id, console, video (composite/S-video), SD log file name, what was observed, numbers | always |
 
 ## SD card log (hardware)
@@ -30,7 +30,7 @@ to the text log. Code: `src/dc/db.c`; knobs: `src/dc/db.h`.
 1. Text is buffered in RAM from boot.
 2. About 6 s after the game thread starts (`DB_LOG_SD_ARM_MS`), the console prints `db: SD log arming` and goes silent.
 3. The card owns the serial port from then on, so the adapter and a serial cable are mutually exclusive.
-4. Each boot writes the next free `/sd/wings64/log-NNN.txt` and rewrites `/sd/wings64/receipt.txt`.
+4. Each boot writes the next free `/sd/WINGS64/LOGNNN.TXT` and rewrites `/sd/WINGS64/RECEIPT.TXT` (8.3 upper-case names).
 5. Every 2 s (`DB_LOG_SD_SYNC_MS`) the log is written and `fs_fat_sync`ed, so a power-off loses at most 2 s.
 6. Switching it off in the menu unmounts the card and gives the console back.
 

@@ -30,7 +30,9 @@ const char wings64_build_id[] = WINGS64_BUILD_ID;
 #include <dc/sd.h>
 #include <fat/fs_fat.h>
 
-#define SD_DIR      "/sd/wings64"
+/* Upper-case 8.3 names (OpenCrossing's proven GMON.1 / GPROF.TXT pattern): no long-file-name entries,
+   whose handling in libkosfat changed after KOS v2.2.2. */
+#define SD_DIR      "/sd/WINGS64"
 #define SD_BUF_SIZE (64 * 1024)          /* x2 (double buffer); the boot log until arming must fit in one */
 #define SD_LOG_CAP  (32u * 1024u * 1024u)
 #define SD_MAX_ERR  8
@@ -66,15 +68,24 @@ static void sd_append(const char *s, uint32_t n) {
     irq_restore(m);
 }
 
+/* The bring-up step running or last failed, shown in the settings menu ("probe init", "fail mount"):
+   on hardware the console is muted during the probe, so the screen is the only witness. Letters only
+   (the menu font has no punctuation). */
+static const char *volatile sd_step = "init";
+
 static int sd_probe(void) {
     sd_init_params_t p;
     uint8_t ptype = 0;
     p.interface = DB_LOG_SD_IF == 1 ? SD_IF_SCI : SD_IF_SCIF;
     p.check_crc = true;
+    sd_step = "init";
     if (sd_init_ex(&p) != 0) return 0;
     /* MBR only: a "superfloppy" card (no partition table) does not enumerate here. */
+    sd_step = "part";
     if (sd_blockdev_for_partition(0, &sd_dev, &ptype) != 0) { sd_shutdown(); return 0; }
+    sd_step = "fat";
     if (fs_fat_init() != 0) { sd_shutdown(); return 0; }
+    sd_step = "mount";
     if (fs_fat_mount("/sd", &sd_dev, FS_FAT_MOUNT_READWRITE) != 0) { fs_fat_shutdown(); sd_shutdown(); return 0; }
     return 1;
 }
@@ -82,7 +93,7 @@ static int sd_probe(void) {
 static void sd_receipt(const char *why, unsigned int ms) {
     char txt[512];
     int n;
-    file_t f = fs_open(SD_DIR "/receipt.txt", O_WRONLY | O_CREAT | O_TRUNC);
+    file_t f = fs_open(SD_DIR "/RECEIPT.TXT", O_WRONLY | O_CREAT | O_TRUNC);
     if (f < 0) { sd_err++; return; }
     n = snprintf(txt, sizeof txt,
                  "wings64-dc %s\n"
@@ -114,10 +125,11 @@ static void sd_arm(void) {
         dbglog(DBG_INFO, "db: no SD card (MBR FAT32 needed); console log only\n");
         return;
     }
+    sd_step = "open";
     fs_mkdir(SD_DIR);
-    for (i = 0; i < 1000; i++) {           /* first free log-NNN.txt: one file per boot */
+    for (i = 0; i < 1000; i++) {           /* first free LOGNNN.TXT: one file per boot */
         file_t f;
-        snprintf(sd_path, sizeof sd_path, SD_DIR "/log-%03d.txt", i);
+        snprintf(sd_path, sizeof sd_path, SD_DIR "/LOG%03d.TXT", i);
         f = fs_open(sd_path, O_RDONLY);
         if (f < 0) break;
         fs_close(f);
@@ -212,11 +224,20 @@ void db_sd_set_enabled(int on) {
 const char *db_sd_status(void) {
     if (!sd_on) return sd_state == SD_UP ? "turning off" : "off";
     switch (sd_state) {
-    case SD_UP: return sd_path + sizeof SD_DIR;   /* "log-NNN.txt" */
-    case SD_NOCARD: return "no card";
+    case SD_UP: return sd_path + sizeof SD_DIR;   /* "LOGNNN.TXT" */
+    case SD_NOCARD: {
+        static char why[24];
+        snprintf(why, sizeof why, "fail %s", sd_step);
+        return why;
+    }
     case SD_STOPPED: return "stopped";
     }
-    return sd_last_ms < DB_LOG_SD_ARM_MS ? "starting" : "probing";
+    if (sd_last_ms < DB_LOG_SD_ARM_MS) return "starting";
+    {
+        static char what[24];
+        snprintf(what, sizeof what, "probe %s", sd_step);
+        return what;
+    }
 }
 #else
 void db_sd_poll(unsigned int ms) { (void)ms; }

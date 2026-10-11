@@ -1,5 +1,18 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — first hardware run: M4 hw-test disc (db2e587-1011-1821), maintainer report
+- Boots and plays on a retail console (CD-R; composite). **Audio "sounds really good"** (music + SFX).
+- Frame rate 15-20 fps (hardware; emulator had claimed ~30 in the air / ~20 on the pad).
+- Menus very slow between loading screens (emulator: 5-7 s per menu change; same on hardware).
+- Visual: a cylinder under the Rocket Belt pilot in flight; landing target texture "all striped";
+  pilots do not appear on the pilot select screen.
+- SD card log status read "probing" with the card in the adapter; the card (MBR FAT32, 4 KB clusters,
+  OpenCrossing's GMON.1 on it) got no files. Fix for the next disc: OpenCrossing's KOS 1c6398f SD stack
+  (sd.c + scif-spi.c, time-bounded waits) backported as src/dc/kos_sd, 8.3 upper-case file names, and the
+  SD state drawn under the FPS counter. Flycast (no adapter): "SD FAIL INIT" within seconds, game runs.
+- Maintainer: "visually it's pretty good"; FPS is the priority. Flycast had claimed ~30 fps in the air:
+  emulator timing is not evidence (CLAUDE.md), now confirmed the hard way.
+
 ## 2026-10-11 — M4 done (emulator): music + SFX on the AICA
 - Design consult first (Fable agent): docs/audio-design.md; amendments from execution at its end.
 - `tools/audio/transcode.py` (vadpcm.py + yamaha.py): 164 waves -> disc/wings64.aud, 1,860,032 B. Looped

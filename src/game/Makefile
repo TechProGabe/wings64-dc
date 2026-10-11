@@ -42,7 +42,9 @@ PORT_SRC := \
 	src/dc/gfx/gfx_texconv.c \
 	src/dc/gfx/gfx_pvr.c \
 	src/dc/gfx/gfx_f3d.c \
-	src/dc/ultra/rdram.c
+	src/dc/ultra/rdram.c \
+	src/dc/kos_sd/sd.c \
+	src/dc/kos_sd/scif_spi.c
 
 SHZ_C := $(SHZ)/source/shz_matrix.c $(SHZ)/source/shz_quat.c $(SHZ)/source/shz_version.c \
 	 $(SHZ)/source/shz_xmtrx.c $(SHZ)/source/sh4/shz_complex_sh4.c
