@@ -15,9 +15,9 @@ static inline void dc_pvr_init(void) {
     pvr_init_params_t p = {
         { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16 },
         512 * 1024, /* vertex_buf_size */
-        0,          /* dma_enabled */
+        1,          /* dma_enabled: lists fill RAM buffers in any order (gfx_pvr.c) */
         0,          /* fsaa_enabled */
-        0,          /* autosort_disabled */
+        1,          /* autosort_disabled: translucent polys draw in N64 submission order */
         3,          /* opb_overflow_count */
         0,          /* vbuf_doublebuf_disabled */
     };

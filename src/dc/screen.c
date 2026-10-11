@@ -52,11 +52,11 @@ static void quad(void) {
     pvr_vertex_t v;
     const float u1 = 640.0f / TEX_W, v1 = 480.0f / TEX_H;
     v.flags = PVR_CMD_VERTEX; v.argb = 0xFFFFFFFF; v.oargb = 0; v.z = 1.0f;
-    v.x = 0.0f;   v.y = 480.0f; v.u = 0.0f; v.v = v1; pvr_prim(&v, sizeof v);
-    v.x = 0.0f;   v.y = 0.0f;   v.u = 0.0f; v.v = 0.0f; pvr_prim(&v, sizeof v);
-    v.x = 640.0f; v.y = 480.0f; v.u = u1;   v.v = v1; pvr_prim(&v, sizeof v);
+    v.x = 0.0f;   v.y = 480.0f; v.u = 0.0f; v.v = v1; pvr_list_prim(PVR_LIST_OP_POLY, &v, sizeof v);
+    v.x = 0.0f;   v.y = 0.0f;   v.u = 0.0f; v.v = 0.0f; pvr_list_prim(PVR_LIST_OP_POLY, &v, sizeof v);
+    v.x = 640.0f; v.y = 480.0f; v.u = u1;   v.v = v1; pvr_list_prim(PVR_LIST_OP_POLY, &v, sizeof v);
     v.flags = PVR_CMD_VERTEX_EOL;
-    v.x = 640.0f; v.y = 0.0f;   v.u = u1;   v.v = 0.0f; pvr_prim(&v, sizeof v);
+    v.x = 640.0f; v.y = 0.0f;   v.u = u1;   v.v = 0.0f; pvr_list_prim(PVR_LIST_OP_POLY, &v, sizeof v);
 }
 
 void screen_frame(void) {
@@ -67,9 +67,7 @@ void screen_frame(void) {
         dirty = 0;
     }
     pvr_scene_begin();
-    pvr_list_begin(PVR_LIST_OP_POLY);
-    pvr_prim(&hdr, sizeof hdr);
+    pvr_list_prim(PVR_LIST_OP_POLY, &hdr, sizeof hdr);   /* vertex DMA mode (dcpvr.h) */
     quad();
-    pvr_list_finish();
     pvr_scene_finish();
 }

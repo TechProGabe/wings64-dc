@@ -20,3 +20,4 @@ __pycache__/
 dc_env.local.sh
 external/pw64-decomp/
 disc/
+docs/evidence/

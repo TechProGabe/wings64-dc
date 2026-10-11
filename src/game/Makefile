@@ -39,6 +39,8 @@ PORT_SRC := \
 	src/dc/ultra/kos_bridge.c \
 	src/dc/save/vmu_eeprom.c \
 	src/dc/gfx/gfx_texconv.c \
+	src/dc/gfx/gfx_pvr.c \
+	src/dc/gfx/gfx_f3d.c \
 	src/dc/ultra/rdram.c
 
 SHZ_C := $(SHZ)/source/shz_matrix.c $(SHZ)/source/shz_quat.c $(SHZ)/source/shz_version.c \

@@ -15,6 +15,7 @@
 #include "assetroot.h"
 #include "rom/romfs.h"
 #include "milestone.h"
+#include "gfx/gfx_pvr.h"
 
 #include <kos.h>
 #include <malloc.h>
@@ -76,6 +77,7 @@ int main(int argc, char **argv) {
 
     vid_set_mode(DM_640x480, PM_RGB565);   /* 480i on composite/S-video, 480p on VGA; never 50 Hz */
     dc_pvr_init();
+    gpvr_init();
     db_sd_init();
     screen_init();
 
@@ -160,6 +162,14 @@ done:
         wings64_rdram_init();
         db_log("boot: starting decomp bootproc\n");
         bootproc(NULL);
+        /* The game's scheduler thread owns the PVR from here (gfx_f3d.c); main only reports. */
+        for (unsigned s = 1;; s++) {
+            thd_sleep(1000);
+            db_log("game: t %u s gfx %u aud %u vi %u pi0 %u\n", s, wings64_gfx_tasks(), wings64_aud_tasks(),
+                   wings64_vi_retraces(), wings64_pi_zero_reads());
+            if (s == 5) db_log("WINGS64_M2_GAMELOOP\n");
+            db_sd_flush();
+        }
     }
     screen_line(ROW_RESULT, ok ? SCREEN_GREEN : SCREEN_RED, "M%d RESULT: %s", WINGS64_MILESTONE, ok ? "PASS" : "FAIL");
     db_log("WINGS64_M%d_%s\n", WINGS64_MILESTONE, ok ? "OK" : "FAIL");

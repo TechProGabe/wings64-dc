@@ -289,14 +289,14 @@ s32 osPiRawReadIo(u32 devAddr, u32 *data) { return pi_read_word(devAddr, data); 
 
 static u32 sGfxTasks, sAudTasks;
 
-/* The display-list interpreter (src/dc/gfx, M2). Weak until it exists: tasks are counted only. */
-__attribute__((weak)) void wings64_gfx_run(OSTask *task) { (void)task; }
+/* The display-list interpreter (src/dc/gfx/gfx_f3d.c). Weak so the host test build links without it. */
+__attribute__((weak)) void gfx_f3d_run(const void *dl) { (void)dl; }
 
 void osSpTaskLoad(OSTask *task) { (void)task; }
 void osSpTaskStartGo(OSTask *task) {
     if (task->t.type == M_GFXTASK) {
         sGfxTasks++;
-        wings64_gfx_run(task);
+        gfx_f3d_run(task->t.data_ptr);
         post_event(OS_EVENT_SP);
         post_event(OS_EVENT_DP);
     } else {
