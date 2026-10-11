@@ -8,6 +8,34 @@
 > for all math. Never commit ROM material. Mark departures `DIVERGES`. Report
 > hardware results, not emulator ones, as evidence.
 
+## Next-run seed prompt (M4 audio, written 2026-10-11)
+> You are executing wings64-dc (~/Documents/GitHub/wings64-dc), a native Dreamcast port of
+> Pilotwings 64 from its decomp. Read `CLAUDE.md`, `kb/RESUME.md`, `PLAN.md` (D6, M4, decisions 7-9),
+> `kb/STATE.md`, `kb/traps.md`. M0-M3 are done in the emulator gate; start **M4 audio**: music + SFX in
+> menus and flight, no dropouts over 10 min (emulator gate; hardware numbers are hypotheses).
+>
+> **Step 1, before any audio code: spawn a Fable agent (Agent tool, model "fable") as a design
+> consultant** and give it these facts to rule on: the ADPCM pool is 1.92 MiB (music 0.71 + SFX 1.21,
+> `tools/audio/measure_pool.py`) against ~1.75 MiB of AICA RAM after driver/ring buffers, so it does not
+> fit resident; 6 waves exceed 65534 samples (music 110,432 / 104,224; SFX 77,312 / 81,968 / 110,432 /
+> 85,344); music waves live in audio_tbl (ROM 0x6314D0+, not in the RAM image: PI reads there return
+> zeros today, `src/dc/ultra/os_shim.c`), SFX in UVSX .TBL inside wings64.fs; 16 MB main RAM is tight;
+> the ARM7 is too weak for mixing. Ask it to choose and justify: resident vs paged music (per level or
+> per sequence), streaming vs splitting the long waves, PCM fallback rules for >+1 octave pitch, where
+> audio_tbl lives (RAM image extension vs disc reads at level load), the alSyn voice -> AICA channel
+> mapping and command queue (sm64-dc `aica_synth.c` lineage, `snd_sh4_to_aica`), audio-thread timing
+> against vblank, and a test plan that works in Flycast (the gate cannot hear: log voice starts, wave
+> ids, AICA channel state; record audio in the emulator container if possible). Get its answer as a
+> short design note, write it to `docs/audio-design.md`, then execute it.
+>
+> Rules that bind (CLAUDE.md): never commit ROM material, extracted waves, ADPCM pools or recordings;
+> sh4zam for float math, no double, -m4-single-only; never edit the decomp in place (patches/ + .md,
+> WINGS64_DC guards, `DIVERGES:` comments); every optimization has a kill switch; agents don't run git,
+> the main thread commits; releases are local only. Use up to 10 Haiku agents for parallel pieces
+> (wave extraction tool, transcoder, host tests) and Opus agents for large self-contained features.
+> Gate with `./run.sh gate` (state-relative autoplay steps; one emulator at a time; never turn the SD
+> log on in Flycast). End M4 with `./run.sh disc`, kb/STATE.md + kb/state-log.md updates, and a commit.
+
 ## Where the port is
 **M3 done 2026-10-11 (emulator gate PASS).** Title -> file menu -> class select -> pilot select -> test
 overview/details/setup -> Rocket Belt Beginner flight -> results, driven by `./run.sh gate`
