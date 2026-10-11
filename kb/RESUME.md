@@ -9,9 +9,9 @@
 > hardware results, not emulator ones, as evidence.
 
 ## Where the port is
-M0 built 2026-10-10: container, `run.sh`, ROM slicer, KOS boot check screen, `build/wings64.cdi`.
-**Blocked on the maintainer's CD-R boot** (exit criteria in `kb/STATE.md`). Do not start M1 until the
-M0 screen is reported PASS. Flycast is broken on the host (see `kb/traps.md`), so there is no emulator smoke.
+M0 done 2026-10-10 (emulator PASS). Next: **M1** (`PLAN.md` §2). Milestones are gated by
+`./run.sh smoke` (containerized Flycast; maintainer burns no discs). Host macOS Flycast is broken
+(`kb/traps.md`); always use the container.
 
 ## Reference clones used for planning (re-clone when needed; shallow is fine)
 | what | where | pin |
@@ -39,13 +39,14 @@ The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
 ./run.sh release          # build/wings64-release.cdi (no db.o, NDEBUG)
 ./run.sh test [--ci]      # host tests + tree checks (--ci: no ROM needed)
 ./run.sh run-hw           # no cable: prints the .cdi path to burn + checklist
-./run.sh smoke            # Flycast serial smoke (waits for WINGS64_M<n>_OK); host Flycast currently broken
+./run.sh smoke            # THE GATE: containerized Flycast, waits for WINGS64_M<n>_OK, screenshots build/emu-shot-*.png
 ./run.sh shell            # shell inside the pinned container
 ./run.sh decomp-refresh   # re-fetch decomp at pin and re-apply patches/
 ./run.sh emu              # Flycast GUI on build/wings64-emu.cdi with serial console
 ```
 
 ## Measurement rules
+0. Milestone exits are judged in the emulator gate (maintainer, 2026-10-10). Emulator numbers are labelled "emulator".
 1. A number without a hardware run is a hypothesis. 2. Every perf change ships
 with a kill switch and a before/after pair (us/frame from `DB_PERF`, screenshot).
 3. Flycast cannot falsify a cache-locality claim. 4. Record numbers in

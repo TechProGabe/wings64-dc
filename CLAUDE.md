@@ -3,7 +3,7 @@
 **wings64-dc** — native Sega Dreamcast port of Pilotwings 64 (N64), built from
 the `gcsmith/Pilotwings64Decomp` matching decomp on KallistiOS with **sh4zam**.
 Target: **retail Dreamcast, stock 16 MB**, SH-4 @ 200 MHz, PowerVR CLX2, AICA.
-Output: a ready-to-burn `.cdi`. Status: **M0 built, awaiting first CD-R boot** — an
+Output: a ready-to-burn `.cdi`. Status: **M0 done (emulator PASS); M1 next** — an
 executing LLM starts at `kb/RESUME.md`.
 
 This file is an index plus the rules that must never be violated. It carries no
@@ -29,8 +29,11 @@ status narrative: state lives in `kb/STATE.md`, the handoff in `kb/RESUME.md`.
 - **Stock 16 MB.** No 32 MB dependency. **The MMU stays off.**
 - **Every optimization has a kill switch** (compile-time `WINGS64_*` or `DB_*`
   knob) and the default is the good build.
-- **Hardware is truth.** Flycast is for smoke tests and serial logs. A cache or
-  timing claim is judged on a burned disc, never on an emulator "no change".
+- **Emulator is the milestone gate** (maintainer decision 2026-10-10: no CD-R burns).
+  `./run.sh smoke` boots the `--emu` image in pinned Flycast (container, HLE BIOS,
+  composite 480i) and must print the milestone marker; its screenshots are evidence.
+  Flycast is not cycle-accurate: cache, timing and fps claims stay **hypotheses**
+  labelled "emulator" in `kb/STATE.md` until a console run exists.
 - **Physics TUs use exact sh4zam variants** (no `_fsrra`/FSCA); purity check
   enforces it so `fdr.c` replays stay deterministic.
 - **Releases are cut locally** with `./run.sh release`, never by CI.

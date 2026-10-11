@@ -280,6 +280,10 @@ DIVERGES format, sh4zam-name lint, purity). Pre-commit runs `./run.sh test --ci`
 4. **GCC pin: 14.3.0.** Fallback 13.2.0; 15.2 only as a measured experiment.
 5. **v0.1 frame rate: locked 30 fps** (N64 parity). 60 fps in flight is the M6 stretch.
 6. Console revision unknown → ship both default and `-L data-data` images in M7.
+7. **(2026-10-10, supersedes 1 for gating) No CD-R burns.** Every milestone exit is judged in
+   Flycast (`./run.sh smoke`: pinned v2.7 built from source in `docker/emu/`, Xvfb, HLE BIOS,
+   composite cable) via serial marker + screenshots. Performance numbers from it are labelled
+   "emulator" and are not hardware evidence. CD-R images are still produced by `./run.sh disc`.
 
 ## 6. Out of scope
 Widescreen, JP/EU versions, mods, 32 MB RAM mod, emulator-specific fixes,

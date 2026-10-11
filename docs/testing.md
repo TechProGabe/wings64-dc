@@ -6,6 +6,6 @@
 | purity (`fpu_check.py`) | disassemble objects; forbid FSRRA/FSCA/fmac in physics-pinned TUs; forbid KOS `mat_*` symbols anywhere | pre-commit |
 | host tests (`src/dc/test`) | decomp parsers on the fs slice vs expected struct values (swap correctness), MIO0 vs reference, Fast3D interpreter on captured DLs → golden vertex output, mesg-queue semantics, VMU save round trip; sh4zam `SHZ_BACKEND=SW` (algebra only, not accuracy) | `./run.sh test` (needs ROM) |
 | replay oracle | `DB_FDR_HASH`: hash of flight-recorder state per frame while playing the ROM's demo replays; must match between builds and between host and target for physics-adjacent changes | per milestone |
-| emulator smoke | Flycast boots the `--emu` cdi, serial log shows the milestone marker string | per build |
+| emulator gate (`./run.sh smoke`) | containerized Flycast v2.7 (`docker/emu/`, Xvfb, HLE BIOS, composite) boots the `--emu` cdi; serial log must show `WINGS64_M<n>_OK`; `build/emu-shot-{1,2}.png` captured at the marker and +5 s | every milestone exit (maintainer decision 2026-10-10) |
 | hardware | burned CD-R on the retail console: boot, milestone exit criteria, `DB_PERF` numbers via on-screen overlay and `/sd/wings64/log-*.txt` (SD adapter; no dcload); soak (`DB_SOAK`) 30 min for audio dropouts | per milestone |
 | hardware evidence format | `kb/state-log.md` entry: date, disc build id, console, video (composite/S-video), SD log file name, what was observed, numbers | always |

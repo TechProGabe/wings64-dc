@@ -3,13 +3,16 @@
 #   scripts/ctr.sh build            build image wings64-dc:<pin hash> (tagged :dev too)
 #   scripts/ctr.sh run <cmd...>     run <cmd> in /work with the repo bind-mounted, KOS env sourced
 #   scripts/ctr.sh tag              print the image tag the pins resolve to
+#   scripts/ctr.sh emu-build        build the Flycast emulator image (docker/emu/Dockerfile)
 # WINGS64_NATIVE=1 skips the container and runs <cmd> on the host (KOS env must already be sourced).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 . "$ROOT/docker/pins.env"
 
-pin_hash() { cat "$ROOT/docker/pins.env" "$ROOT/docker/Dockerfile" "$ROOT/docker/fetch-src.sh" | shasum -a 256 | cut -c1-12; }
+# Tags hash only the inputs of each image: toolchain pins (no FLYCAST_/EMU_ lines, no comments) vs emulator pins.
+pin_hash() { { grep -vE '^(#|$|FLYCAST_|EMU_)' "$ROOT/docker/pins.env"; cat "$ROOT/docker/Dockerfile" "$ROOT/docker/fetch-src.sh"; } | shasum -a 256 | cut -c1-12; }
+emu_hash() { { grep -E '^FLYCAST_' "$ROOT/docker/pins.env"; cat "$ROOT/docker/emu/Dockerfile"; } | shasum -a 256 | cut -c1-12; }
 TAG="$IMAGE_NAME:$(pin_hash)"
 
 ensure_docker() {
@@ -26,6 +29,13 @@ ensure_docker() {
 cmd=${1:-}; shift || true
 case "$cmd" in
     tag) echo "$TAG" ;;
+    emu-tag) echo "$EMU_IMAGE_NAME:$(emu_hash)" ;;
+    emu-build)
+        ensure_docker
+        etag="$EMU_IMAGE_NAME:$(emu_hash)"
+        docker build --build-arg FLYCAST_URL="$FLYCAST_URL" --build-arg FLYCAST_TAG="$FLYCAST_TAG" \
+            --build-arg FLYCAST_REV="$FLYCAST_REV" -t "$etag" -t "$EMU_IMAGE_NAME:dev" "$@" "$ROOT/docker/emu"
+        ;;
     build)
         ensure_docker
         args=()

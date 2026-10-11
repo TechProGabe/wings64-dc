@@ -71,4 +71,7 @@
 - Padded CD-R CDI is ~705 MB of raw 2352-byte sectors (fills toward an 80-min disc): use 80-min CD-R.
 - The `shz_`/`SHZ_` prefixes are reserved for sh4zam: the name lint flags port identifiers using them.
 - Flycast 2.6 on this Mac (Darwin 27) aborts in `sh4/dyna/driver.cpp:347` "Verify Failed &mem_b[0] == …"
-  for every image, dynarec on or off. No emulator smoke until Flycast is updated; hardware only.
+  for every image, dynarec on or off (2.7 too). Fix: Flycast v2.7 built from source on Linux in
+  `docker/emu/` under Xvfb + Mesa llvmpipe works (`./run.sh smoke`). `--user` without a writable
+  $HOME/.config only produces harmless "cannot save emu.cfg / nvmem" warnings.
+- `mallinfo().fordblks` is free space inside the malloc arena, not free RAM (M0 screen shows "free 10 KB").
