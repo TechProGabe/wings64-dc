@@ -36,7 +36,10 @@ PORT_SRC := \
 	src/dc/rom/pw64_swap.c \
 	src/dc/ultra/mio0.c \
 	src/dc/ultra/fatal.c \
-	src/dc/ultra/stubs_todo.c
+	src/dc/ultra/kos_bridge.c \
+	src/dc/save/vmu_eeprom.c \
+	src/dc/gfx/gfx_texconv.c \
+	src/dc/ultra/rdram.c
 
 SHZ_C := $(SHZ)/source/shz_matrix.c $(SHZ)/source/shz_quat.c $(SHZ)/source/shz_version.c \
 	 $(SHZ)/source/shz_xmtrx.c $(SHZ)/source/sh4/shz_complex_sh4.c
@@ -49,7 +52,7 @@ DECOMP_DIRS := src/kernel src/app src/libultra/audio src/libultra/sp
 DECOMP_SRC  := $(sort $(foreach d,$(DECOMP_DIRS),$(wildcard $(DECOMP)/$(d)/*.c)))
 # Port TUs that include decomp headers (ultra64.h): compiled with the decomp flags.
 DECOMPLIKE_SRC := src/dc/rom/pw64_audio_load.c src/dc/rom/pw64_rom_structs.c src/dc/rom/pw64_arena.c \
-	src/dc/ultra/ultra_data.c src/dc/rom/layout_checks.c
+	src/dc/ultra/ultra_data.c src/dc/rom/layout_checks.c src/dc/ultra/os_shim.c
 
 # Per-TU -O0 quarantine (GCC miscompile evidence goes in kb/traps.md). Starts empty.
 OPT_QUARANTINE_SRC :=
@@ -79,10 +82,7 @@ DECOMP_CFLAGS := $(DECOMP_ABI) $(COMMON) -Os -std=gnu11 -funsigned-char -fwrapv 
 DECOMP_OBJ := $(patsubst $(DECOMP)/%.c,$(OBJDIR)/decomp/%.o,$(DECOMP_SRC)) \
 	$(patsubst %.c,$(OBJDIR)/dl/%.o,$(DECOMPLIKE_SRC))
 
-# (sh-elf prefixes C symbols with "_".) memory.c declares these two N64 linker addresses itself (extern u8 []); M2's memory-map patch replaces
-# their uses with the arena. Until then they are absolute symbols at the N64 values.
-SEG_DEFSYM := -Wl,--defsym=_kernel_TEXT_START=0x802000A0 -Wl,--defsym=_D_803805E0=0x803805E0
-LDFLAGS  := $(SEG_DEFSYM) -Wl,--gc-sections -Wl,-Map=$(TARGET:.elf=.map)
+LDFLAGS  := -Wl,--gc-sections -Wl,-Map=$(TARGET:.elf=.map)
 LIBS     := -lkosfat -lm
 
 PORT_OBJ := $(patsubst %.c,$(OBJDIR)/%.o,$(PORT_SRC))

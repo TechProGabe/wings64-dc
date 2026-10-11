@@ -21,6 +21,12 @@ void pw64_swap(void *p, unsigned int count, unsigned int stride, const char *lay
 #define PW64_SWAP16(p, count) pw64_swap((p), (unsigned int)(count), 2, "h")
 #define PW64_SWAP32(p, count) pw64_swap((p), (unsigned int)(count), 4, "w")
 
+/* N64 RAM addresses (KSEG0 0x80000000..0x80400000) live in a 4 MB arena (patches/017,
+ * src/dc/ultra/rdram.c). N64_K0(0x803DA800) is the arena address of N64 0x803DA800. */
+extern unsigned int gWings64RdramBase;
+#define N64_RDRAM_SIZE 0x400000u
+#define N64_K0(a) (gWings64RdramBase + ((unsigned int)(a) - 0x80000000u))
+
 /* Fatal stop with a message (src/dc/ultra/stubs.c). */
 __attribute__((noreturn)) void pw64_fatal(const char *msg, unsigned int value);
 

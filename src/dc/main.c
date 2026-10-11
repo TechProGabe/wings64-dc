@@ -29,6 +29,8 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
 /* The decomp's boot entry (src/kernel/system.c). Referenced, not called, until M2: keeping it reachable
    makes the link resolve the whole game (kernel + app + libultra audio/sp) against the port. */
 extern void bootproc(void *arg);
+void wings64_rdram_init(void);
+unsigned wings64_gfx_tasks(void), wings64_aud_tasks(void), wings64_vi_retraces(void), wings64_pi_zero_reads(void);
 void (*volatile wings64_decomp_entry)(void *) = bootproc;
 
 #define ROW_TITLE 0
@@ -152,14 +154,33 @@ done:
                     (unsigned long)((brk - (uint32_t)end) >> 10), (unsigned long)((0x8D000000u - brk) >> 10));
     }
     ok &= wings64_decomp_entry != NULL;
+
+    /* M2: hand over to the game. bootproc creates the kernel thread and returns. */
+    if (ok && WINGS64_MILESTONE >= 2) {
+        wings64_rdram_init();
+        db_log("boot: starting decomp bootproc\n");
+        bootproc(NULL);
+    }
     screen_line(ROW_RESULT, ok ? SCREEN_GREEN : SCREEN_RED, "M%d RESULT: %s", WINGS64_MILESTONE, ok ? "PASS" : "FAIL");
     db_log("WINGS64_M%d_%s\n", WINGS64_MILESTONE, ok ? "OK" : "FAIL");
     db_sd_flush();
 
     for (;;) {
         /* Seconds counter: proves video + PVR keep running; text changes force a 1 MB upload. */
-        if (frame % 60 == 0)
+        if (frame % 60 == 0) {
             screen_line(ROW_FRAME, SCREEN_GREY, "alive %lu s", (unsigned long)(frame / 60));
+            if (WINGS64_MILESTONE >= 2) {
+                static unsigned last_gfx;
+                unsigned g = wings64_gfx_tasks();
+                screen_line(ROW_FRAME + 1, SCREEN_YELLOW, "game: gfx %u (+%u/s) aud %u vi %u pi0 %u", g, g - last_gfx,
+                            wings64_aud_tasks(), wings64_vi_retraces(), wings64_pi_zero_reads());
+                db_log("game: gfx %u aud %u vi %u pi0 %u\n", g, wings64_aud_tasks(), wings64_vi_retraces(),
+                       wings64_pi_zero_reads());
+                if (last_gfx < 120 && g >= 120) db_log("WINGS64_M2_GAMELOOP\n");
+                last_gfx = g;
+                db_sd_flush();
+            }
+        }
         frame++;
         screen_frame();
     }

@@ -5,7 +5,7 @@
 
 #include <stdint.h>
 
-#define SCREEN_ROWS 18
+#define SCREEN_ROWS 19
 #define SCREEN_WHITE  0xFFFF
 #define SCREEN_GREY   0x8410
 #define SCREEN_GREEN  0x07E0
