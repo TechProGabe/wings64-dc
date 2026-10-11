@@ -3,7 +3,7 @@
 **wings64-dc** — native Sega Dreamcast port of Pilotwings 64 (N64), built from
 the `gcsmith/Pilotwings64Decomp` matching decomp on KallistiOS with **sh4zam**.
 Target: **retail Dreamcast, stock 16 MB**, SH-4 @ 200 MHz, PowerVR CLX2, AICA.
-Output: a ready-to-burn `.cdi`. Status: **M2 done (emulator PASS); paused; M3 next** — an
+Output: a ready-to-burn `.cdi`. Status: **M3 done (emulator PASS); paused; M4 audio next** — an
 executing LLM starts at `kb/RESUME.md`.
 
 This file is an index plus the rules that must never be violated. It carries no

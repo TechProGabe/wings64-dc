@@ -197,6 +197,8 @@ DIVERGES format, sh4zam-name lint, purity). Pre-commit runs `./run.sh test --ci`
 - `DB_BOOT_LEVEL` knob to skip menus.
 
 ### M3 — One mission playable  (exit: Rocket Belt Beginner Class A playable to results, 30 fps min)
+**Done 2026-10-11 in the emulator gate.** 30 fps holds in the air; the launch-pad view runs ~20 fps
+(emulator), carried to M6. See kb/state-log.md.
 - Terrain (UVTR/UVCT), fog/env (UVEN), models (UVMD), LOD, collision, HUD, text.
 - Endian sites outside the kernel: `task.c`, `spath.c`, `level.c`, `anim.c`,
   `user_paths.c`, `demo*.c`, `text_data.c`, `code_8170.c` tint loops, `code_A8C30.c`.

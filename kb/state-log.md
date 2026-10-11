@@ -1,5 +1,17 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — M3 done (emulator), settings menu, perf
+- Combiner compile + fit cached per (cc0, cc1, cycle, fog, prim, env): fit 15 -> 0.4 ms per flight frame;
+  per-triangle state compare skipped via gpvr_state_serial; u/v scale folded per state. Flight ~21 ->
+  ~30 fps in the air, ~20 on the launch pad (emulator). Kill switches WINGS64_CC_CACHE, WINGS64_STATE_SKIP.
+- Gate made robust: presses last >= 3 controller polls and steps are state-relative (s<state>+ms), re-armed
+  after load gaps; wall-clock scripts broke whenever load times shifted. Gate: flight 89 s -> results 110 s.
+- Title "Settings" menu (Opus agent, worktree merge 191e8b5): game's own Option-screen code, FPS monitor
+  in the HUD style, SD card log toggle with status; VMU persistence. Reviewed: screenshots match the
+  Option screen's look; tests, purity and gate pass on merged main.
+- Flycast: SD log ON stalls the main monitor thread in the SCIF probe and emu_smoke then hung on its
+  recorder; recorder now bounded. Audio still silent (M4).
+
 ## 2026-10-11 — M3 gate PASS (emulator): terrain, sky, SD log
 - Island terrain was never drawn: the camera struct declares the ground view polygon `Vec3F unk328[1]`;
   GCC 14 cut the loops that write/read its 5 points to one, so tile sub-quad masks came out empty.

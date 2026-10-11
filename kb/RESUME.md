@@ -9,19 +9,20 @@
 > hardware results, not emulator ones, as evidence.
 
 ## Where the port is
-M2 done 2026-10-11 (emulator gate PASS): the game boots on KOS threads, renders title/file menu/class
-select through the Fast3D->PVR interpreter, and takes controller input. **Paused here by the maintainer.**
-**M3 in progress (2026-10-11).** Flow already reaches flight and results with scripted input
-(class select -> r -> A x4: pilot select 3, test overview 12, test details 2, test setup 4, test update 5,
-results 6 ~24 s later with no stick). Fixed: vertex fog colour (KOS stub asserted -> reboot).
-OPEN: in flight everything below the horizon is black (terrain, vehicle) and pilot select is black;
-title-screen terrain renders. Not the BG plane depth (zclip 0). Next step: run the DB_GFX_TRACE build
-(trace prints per-frame tris op/pt/tr | rej cull clip vtx w-range) with the script in kb/STATE.md and
-read a state-5 frame; suspects: trivial reject/clip planes with large outdoor w, depth, culling sign.
-Still to do for M3: bump `src/dc/milestone.h` to 3, gate script to results, 30 fps (emulator).
-To watch on the Mac: `./run.sh emu` (native Flycast, docs/flycast-macos.md) or `./run.sh play` (VNC). Milestones are gated by
-`./run.sh smoke` (containerized Flycast; maintainer burns no discs). Host macOS Flycast is broken
-(`kb/traps.md`); always use the container.
+**M3 done 2026-10-11 (emulator gate PASS).** Title -> file menu -> class select -> pilot select -> test
+overview/details/setup -> Rocket Belt Beginner flight -> results, driven by `./run.sh gate`
+(`WINGS64_M3_OK`). Flight renders the island terrain, sea, sky with clouds, buildings, pilots and HUD;
+the title matches the N64 reference photo. Frame rate (emulator): ~30 fps in the air, ~20 fps on the
+launch pad (display list ~30 ms/frame); the 30 fps floor everywhere is carried to M6 (kb/STATE.md queue).
+Port features: title-screen **Settings** menu (FPS monitor, SD card log; patches/021, `src/dc/settings.c`),
+SD card log + crash/assert hook for hardware runs (`src/dc/db.c`, docs/testing.md "SD card log").
+**Audio is silent**: no AICA driver yet, sample reads return zeros. **Next: M4 audio** (PLAN.md).
+Paused here by the maintainer.
+To watch on the Mac: `./run.sh emu` (native Flycast, docs/flycast-macos.md) or `./run.sh play` (VNC).
+Milestones are gated by `./run.sh gate` (containerized Flycast; the maintainer burns no discs).
+Gate scripts use state-relative steps (`s<state>+ms`, src/dc/autoplay.c): menu loads pause controller
+polling for seconds. Run one emulator at a time (two starve the Docker VM). Never turn the SD log on in
+Flycast (the probe stalls the main monitor thread).
 
 ## Reference clones used for planning (re-clone when needed; shallow is fine)
 | what | where | pin |
@@ -50,6 +51,7 @@ The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
 ./run.sh test [--ci]      # host tests + tree checks (--ci: no ROM needed)
 ./run.sh run-hw           # no cable: prints the .cdi path to burn + checklist
 ./run.sh gate             # THE GATE: builds with the milestone's DB_AUTOPLAY script, runs smoke, records video
+                          #   GATE_CFLAGS=-DDB_GFX_PROF=1 / -DDB_GFX_TRACE=1 / -DDB_CRASH_TEST=1 add debug knobs
 ./run.sh play             # Flycast in the container over VNC -> macOS Screen Sharing (password wings64)
 ./run.sh smoke            # emulator smoke: containerized Flycast, waits for WINGS64_M<n>_OK, screenshots build/emu-shot-*.png
 ./run.sh shell            # shell inside the pinned container
@@ -70,7 +72,8 @@ H1 endianness · H2 Fast3D→PVR fidelity · H3 alSyn→AICA · H4 scheduler sem
 H5 IDO UB + fixed memory map · H6 float determinism · H7 ROM-in-RAM fit/load time.
 
 ## Facts that live only in a human's head (answered 2026-10-10)
-- No dcload cable: **CD-R only**. SD card adapter present → logs via `DB_LOG_SD` to `/sd/wings64/`.
+- No dcload cable: **CD-R only**. SD card adapter present → logs to `/sd/wings64/log-NNN.txt` (Settings
+  menu or `DB_LOG_SD=1`; MBR FAT32, 4 KB clusters; docs/testing.md).
 - **Composite/S-video only** (480i). No VGA box yet.
 - Console revision unknown (VA0/1/2) → build both default and `-L data-data` release images.
 - CD-R brand/speed that boots reliably: ask when the first disc is burned; record here.

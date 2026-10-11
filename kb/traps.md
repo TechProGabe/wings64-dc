@@ -119,7 +119,8 @@
   list) has combiner alpha 1; with `MODULATEALPHA` + texture alpha its transparent texels punched a
   black band through the sky. `txr_alpha` follows the fitted alpha's texel term.
 - **Controller polls stop for seconds after a menu change** (asset loads): an autoplay stick step of
-  300 ms inside that window is lost. The M3 gate's stick step sits at 37 s, after the poll resumes.
+  300 ms inside that window is lost. Gate scripts use state-relative steps re-armed after load gaps
+  (`s<state>+ms`, src/dc/autoplay.c), and every press lasts at least 3 polls.
 
 ## SD card logging (carried over from OpenCrossing-Dreamcast hardware runs, 2026-10-11)
 - `O_APPEND` on fs_fat: 0x08 lands inside `O_MODE_MASK`; the open succeeds and every write fails
