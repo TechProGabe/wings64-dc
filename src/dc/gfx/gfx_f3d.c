@@ -819,8 +819,9 @@ static void screen_quad(float x0, float y0, float x1, float y1, float s0, float 
     gpvr_vtx_t q[4];
     float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
     if (textured) {
-        u0 = (s0 - cur_uls) / cur_tex_w; u1 = (s1 - cur_uls) / cur_tex_w;
-        v0 = (t0 - cur_ult) / cur_tex_h; v1 = (t1 - cur_ult) / cur_tex_h;
+        float iw = shz_invf(cur_tex_w), ih = shz_invf(cur_tex_h);
+        u0 = (s0 - cur_uls) * iw; u1 = (s1 - cur_uls) * iw;
+        v0 = (t0 - cur_ult) * ih; v1 = (t1 - cur_ult) * ih;
     }
     q[0] = (gpvr_vtx_t){ x0 * SCALE, y0 * SCALE, 1.0f, u0, v0, argb, oargb };
     q[1] = (gpvr_vtx_t){ x1 * SCALE, y0 * SCALE, 1.0f, u1, v0, argb, oargb };
@@ -830,10 +831,27 @@ static void screen_quad(float x0, float y0, float x1, float y1, float s0, float 
     gpvr_tri(&q[1], &q[3], &q[2]);
 }
 
+/* docs/fps-plan.md change 4: menus draw every glyph as a texrect, and each one recompiled and re-evaluated
+   the whole combiner. The result depends only on the combiner words, prim/env colours, cycle type and
+   whether a texture is bound, so the last answer is reused while those match. Kill switch WINGS64_RECT_FIT=0. */
+#ifndef WINGS64_RECT_FIT
+#define WINGS64_RECT_FIT 1
+#endif
 static void rect_colors(int textured, uint32_t *argb, uint32_t *oargb) {
     vtx_t white = { 0 };   /* RDP rectangles have no shade: SHADE inputs read 0 */
     lin_t c[4];
-    cc_compile(((R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3) == 1);
+    int two = ((R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3) == 1;
+#if WINGS64_RECT_FIT
+    static struct { uint32_t cc0, cc1, prim, env, key, argb, oargb; int valid; } last;
+    uint32_t key = (uint32_t)two | (uint32_t)textured << 1;
+    if (last.valid && last.cc0 == R.cc0 && last.cc1 == R.cc1 && last.prim == R.prim_raw && last.env == R.env_raw &&
+        last.key == key) {
+        *argb = last.argb;
+        *oargb = last.oargb;
+        return;
+    }
+#endif
+    cc_compile(two);
     combine(&white, 0, c);
     if (textured) {
         *argb = (clamp8(c[3].m != 0.0f ? c[3].m : c[3].k) << 24) | (clamp8(c[0].m) << 16) | (clamp8(c[1].m) << 8) | clamp8(c[2].m);
@@ -842,6 +860,10 @@ static void rect_colors(int textured, uint32_t *argb, uint32_t *oargb) {
         *argb = (clamp8(c[3].k) << 24) | (clamp8(c[0].k) << 16) | (clamp8(c[1].k) << 8) | clamp8(c[2].k);
         *oargb = 0;
     }
+#if WINGS64_RECT_FIT
+    last.cc0 = R.cc0; last.cc1 = R.cc1; last.prim = R.prim_raw; last.env = R.env_raw; last.key = key;
+    last.argb = *argb; last.oargb = *oargb; last.valid = 1;
+#endif
 }
 
 static void do_fillrect(uint32_t w0, uint32_t w1) {

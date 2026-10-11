@@ -11,11 +11,11 @@
 
 #if DB_PROF
 void prof_init(void);
-void prof_poll(unsigned ms);
+void prof_poll(unsigned ms, int state);
 unsigned prof_dumps(void);
 #else
 static inline void prof_init(void) {}
-static inline void prof_poll(unsigned ms) { (void)ms; }
+static inline void prof_poll(unsigned ms, int state) { (void)ms; (void)state; }
 static inline unsigned prof_dumps(void) { return 0; }
 #endif
 

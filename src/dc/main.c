@@ -163,6 +163,9 @@ int main(int argc, char **argv) {
     screen_line(ROW_TITLE, SCREEN_CYAN, "wings64-dc  M%d boot check", WINGS64_MILESTONE);
     screen_line(ROW_BUILD, SCREEN_GREY, "build %s", wings64_build_id);
     math_ok = xmtrx_selftest();
+#ifdef DB_FSQRT_TEST
+    { extern void wings64_fsqrt_test(void); wings64_fsqrt_test(); }
+#endif
     screen_line(ROW_SHZ, math_ok ? SCREEN_GREY : SCREEN_RED, "sh4zam %d.%d.%d SH4 xmtrx %s",
                 SHZ_VERSION_MAJOR, SHZ_VERSION_MINOR, SHZ_VERSION_PATCH, math_ok ? "ok" : "FAIL");
     ok &= math_ok;
@@ -276,7 +279,7 @@ done:
 #if DB_GFX_TRACE
             if (ms == 20000) { extern void wings64_dump_model_scales(void); wings64_dump_model_scales(); }
 #endif
-            prof_poll(ms);
+            prof_poll(ms, st);
             if (ms % 1000 == 0) audio_tick(ms, st, seen_flight);
 #if DB_SOAK && WINGS64_AUDIO
             /* wall-clock time: the 250 ms loop counter runs slow against it */
