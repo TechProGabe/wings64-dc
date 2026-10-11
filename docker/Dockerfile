@@ -43,5 +43,10 @@ RUN fetch-src.sh "$MKDCDISC_URL" "$MKDCDISC_REV" /opt/mkdcdisc-src \
  && cd /opt/mkdcdisc-src && meson setup builddir --buildtype=release && meson compile -C builddir \
  && install -m 755 builddir/mkdcdisc /usr/local/bin/mkdcdisc \
  && rm -rf /opt/mkdcdisc-src
+# Host test build (PLAN M1): the decomp is ILP32, so host tests build for 32-bit ARM (little-endian like
+# the SH-4) and run under qemu-arm. Last layer so the toolchain/KOS layers above stay cached.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user \
+    && rm -rf /var/lib/apt/lists/*
 ENV KOS_BASE=/opt/toolchains/dc/kos
 WORKDIR /work

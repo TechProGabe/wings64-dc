@@ -168,7 +168,7 @@ DIVERGES format, sh4zam-name lint, purity). Pre-commit runs `./run.sh test --ci`
   Flags: `-Os` default, `-funsigned-char -fwrapv -fno-strict-aliasing
   -ffp-contract=off -ftrivial-auto-var-init=zero`, `-m4-single-only -mfsrra -mfsca`,
   `-Wno-*` only on decomp TUs. Hot list (`-O3`): gfx core, `mtx.h` users, mixer.
-- Compile `src/app`, `src/kernel`, `src/libultra/{audio,sp,gu}`; exclude
+- Compile `src/app`, `src/kernel`, `src/libultra/{audio,sp}` (no `gu` exists in this decomp); exclude
   `libultra/{os,io,libc,debug,vimodes}`, `rsp`. Stub every undefined `os*`/`al*`
   symbol from Birdman64 native-build.md §1 with `abort("TODO")`.
 - Host build (`make -C src/dc/test hosttest`) with fake `kos.h`/`dc/pvr.h` and

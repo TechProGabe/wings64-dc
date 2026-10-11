@@ -75,3 +75,17 @@
   `docker/emu/` under Xvfb + Mesa llvmpipe works (`./run.sh smoke`). `--user` without a writable
   $HOME/.config only produces harmless "cannot save emu.cfg / nvmem" warnings.
 - `mallinfo().fordblks` is free space inside the malloc arena, not free RAM (M0 screen shows "free 10 KB").
+
+## Paid for in M1 (2026-10-10)
+- GCC 14 makes int<->pointer conversions errors; the decomp relies on them. Decomp TUs only get
+  `-Wno-int-conversion -Wno-incompatible-pointer-types` (lossless on ILP32).
+- `--gc-sections` silently drops a decomp that nothing reachable references, and undefined symbols in
+  dropped sections are not reported. `main.c` reads `bootproc`'s address so the link resolves the game.
+- sh-elf prefixes C symbols with `_`: `--defsym=_kernel_TEXT_START=…` (ARM host: no underscore).
+- Adding a shadow header does not trigger rebuilds via -MMD; the shadow list is in the .cflags stamp.
+- objdump decodes SH literal pools as instructions (fake `fmac`); purity checks scan GCC `-S` output.
+- Birdman64 patches have wrong `@@` line counts (hand-edited): GNU patch/git apply reject 10 of 76.
+- The decomp has no `src/libultra/gu` (PLAN M1 listed it); the game uses no gu* beyond sqrtf.
+- Host tests cannot run on the Mac (LP64, no -m32): 32-bit ARM cross + qemu-arm in the container.
+  ARM EABI aligns 8-byte types to 8 (SH-4: 4), so layout asserts are compiled for SH-4 too.
+- `uvDbg_802339B0` colours 0x26 vertices across four arrays IDO placed back to back (patches/010).

@@ -9,7 +9,9 @@
 > hardware results, not emulator ones, as evidence.
 
 ## Where the port is
-M0 done 2026-10-10 (emulator PASS). Next: **M1** (`PLAN.md` §2). Milestones are gated by
+M1 done 2026-10-10 (emulator PASS): patched decomp compiles and links for SH-4 and for an ILP32 host.
+Next: **M2** (`PLAN.md` §2): replace `src/dc/ultra/stubs_todo.c` with the OS shim, the memory map,
+the Fast3D interpreter, input. `src/dc/milestone.h` holds the gate's milestone number. Milestones are gated by
 `./run.sh smoke` (containerized Flycast; maintainer burns no discs). Host macOS Flycast is broken
 (`kb/traps.md`); always use the container.
 

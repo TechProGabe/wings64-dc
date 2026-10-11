@@ -27,12 +27,12 @@ cmd_release() { ## build/wings64-release.cdi and -dd variant (no db, NDEBUG). Lo
     $CTR run scripts/make_cdi.sh
     $CTR run scripts/make_cdi.sh --data-data
 }
-cmd_test() { ## tree checks; without --ci also ROM-backed checks (needs baserom.z64)
+cmd_test() { ## tree checks; without --ci also ROM slice, ILP32 host tests, decomp purity (container)
     scripts/test_tree.sh
     if [ "${1:-}" != --ci ]; then
-        local tmp; tmp=$(mktemp -d)
-        python3 -I tools/rom/slice_fs.py --out "$tmp"
-        rm -rf "$tmp"
+        python3 -I tools/rom/slice_fs.py --quiet
+        $CTR run scripts/test_host.sh --rom
+        $CTR run make -f src/game/Makefile -j6 purity
     fi
 }
 cmd_run-hw() { ## print the .cdi to burn and the hardware checklist

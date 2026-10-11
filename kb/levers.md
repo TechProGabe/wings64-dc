@@ -12,3 +12,5 @@
 | L8 strip Pipe/Tile/LoadSync | no-op already in interpreter; skip decode cost | M6 |
 | L9 2 KB-aligned VRAM allocator | DCA3 `alloc.cpp` idea | if texture churn fragments VRAM |
 | L10 I-cache layout | `.text.hot.gfx` < 8 KB, `-falign-functions=32` | M6 |
+| L11 drop UVSX .TBL from the RAM image | SFX waves (1.43 MB VADPCM) live inside wings64.fs; once transcoded to AICA RAM they are dead weight in main RAM | M4, if RAM is tight |
+| L12 split/stream long waves | 6 waves exceed 65534 samples; split at loop points or stream via a PCM ring (sm64-dc) | M4 (required) |

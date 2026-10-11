@@ -8,7 +8,7 @@
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cdi=${1:-build/wings64-emu.cdi}
-marker=${2:-WINGS64_M0_OK}
+marker=${2:-WINGS64_M$(sed -n 's/^#define WINGS64_MILESTONE \([0-9]*\).*/\1/p' "$ROOT/src/dc/milestone.h")_OK}
 timeout=${3:-120}
 cdi=${cdi#"$ROOT/"}
 [ -f "$ROOT/$cdi" ] || { echo "emu_smoke: $cdi missing (./run.sh disc --emu)" >&2; exit 2; }

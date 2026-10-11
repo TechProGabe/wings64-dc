@@ -1,5 +1,7 @@
 /* main.c — wings64-dc entry point.
  *
+ * Boot check screen for M0-M1 (M2 replaces it with the game's own boot).
+ * M1 adds: the patched decomp is linked (bootproc reachable, not yet called).
  * M0: bring up KOS video + PVR, find the disc, load disc/wings64.fs into RAM (ROM-in-RAM, PLAN D2),
  * then validate it the way the game will: CRC-32 against the manifest cut by tools/rom/slice_fs.py,
  * and a re-implementation of uvMemInitBlockHdr that decompresses the MIO0 TABL index and walks all
@@ -12,6 +14,7 @@
 #include "screen.h"
 #include "assetroot.h"
 #include "rom/romfs.h"
+#include "milestone.h"
 
 #include <kos.h>
 #include <malloc.h>
@@ -23,9 +26,15 @@
 
 KOS_INIT_FLAGS(INIT_DEFAULT);
 
+/* The decomp's boot entry (src/kernel/system.c). Referenced, not called, until M2: keeping it reachable
+   makes the link resolve the whole game (kernel + app + libultra audio/sp) against the port. */
+extern void bootproc(void *arg);
+void (*volatile wings64_decomp_entry)(void *) = bootproc;
+
 #define ROW_TITLE 0
 #define ROW_BUILD 1
 #define ROW_SHZ   2
+#define ROW_DECOMP 3
 #define ROW_ROOT  4
 #define ROW_LOAD  5
 #define ROW_CRC   6
@@ -69,12 +78,13 @@ int main(int argc, char **argv) {
     screen_init();
 
     db_log("wings64-dc %s\n", wings64_build_id);
-    screen_line(ROW_TITLE, SCREEN_CYAN, "wings64-dc  M0 boot check");
+    screen_line(ROW_TITLE, SCREEN_CYAN, "wings64-dc  M%d boot check", WINGS64_MILESTONE);
     screen_line(ROW_BUILD, SCREEN_GREY, "build %s", wings64_build_id);
     math_ok = xmtrx_selftest();
     screen_line(ROW_SHZ, math_ok ? SCREEN_GREY : SCREEN_RED, "sh4zam %d.%d.%d SH4 xmtrx %s",
                 SHZ_VERSION_MAJOR, SHZ_VERSION_MINOR, SHZ_VERSION_PATCH, math_ok ? "ok" : "FAIL");
     ok &= math_ok;
+    screen_line(ROW_DECOMP, SCREEN_GREY, "decomp 1a8558f linked, bootproc @ %p", (void *)wings64_decomp_entry);
     screen_frame();
 
     root = assetroot_probe();
@@ -134,12 +144,16 @@ int main(int argc, char **argv) {
 
 done:
     {
-        struct mallinfo mi = mallinfo();
-        screen_line(ROW_MEM, SCREEN_GREY, "heap used %lu KB  free %lu KB",
-                    (unsigned long)(mi.uordblks >> 10), (unsigned long)(mi.fordblks >> 10));
+        /* Free RAM = top of 16 MB minus the heap break (mallinfo().fordblks is only arena slack). */
+        extern char end[];
+        uint32_t brk = (uint32_t)mm_sbrk(0);
+        screen_line(ROW_MEM, SCREEN_GREY, "RAM image %lu KB  heap %lu KB  free %lu KB",
+                    (unsigned long)(((uint32_t)end - 0x8C000000u) >> 10),
+                    (unsigned long)((brk - (uint32_t)end) >> 10), (unsigned long)((0x8D000000u - brk) >> 10));
     }
-    screen_line(ROW_RESULT, ok ? SCREEN_GREEN : SCREEN_RED, ok ? "M0 RESULT: PASS" : "M0 RESULT: FAIL");
-    db_log(ok ? "WINGS64_M0_OK\n" : "WINGS64_M0_FAIL\n");
+    ok &= wings64_decomp_entry != NULL;
+    screen_line(ROW_RESULT, ok ? SCREEN_GREEN : SCREEN_RED, "M%d RESULT: %s", WINGS64_MILESTONE, ok ? "PASS" : "FAIL");
+    db_log("WINGS64_M%d_%s\n", WINGS64_MILESTONE, ok ? "OK" : "FAIL");
     db_sd_flush();
 
     for (;;) {
