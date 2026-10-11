@@ -20,7 +20,7 @@ to the text log. Code: `src/dc/db.c`; knobs: `src/dc/db.h`.
 - A "superfloppy" card with no partition table does not enumerate.
 - 32 KB clusters make fs_fat ask for about 260 KB of cache mid-run.
 
-**Image.** Any dev build carries the logger, and the title-screen settings menu switches it on.
+**Image.** Any dev build carries the logger, and the title-screen settings menu switches it on (Settings > SD card log; the choice is kept on the VMU, see `src/dc/settings.c`).
 - `EXTRA_CFLAGS=-DDB_LOG_SD=1 ./run.sh disc` turns it on at boot.
 - `-DDB_LOG_SD_IF=1` is only for a reader you know is SCI. With no card, the SCI probe waits forever.
 

@@ -56,7 +56,7 @@ DECOMP_SRC  := $(sort $(foreach d,$(DECOMP_DIRS),$(wildcard $(DECOMP)/$(d)/*.c))
 # Port TUs that include decomp headers (ultra64.h): compiled with the decomp flags.
 DECOMPLIKE_SRC := src/dc/rom/pw64_audio_load.c src/dc/rom/pw64_rom_structs.c src/dc/rom/pw64_arena.c \
 	src/dc/ultra/ultra_data.c src/dc/rom/layout_checks.c src/dc/ultra/os_shim.c \
-	src/dc/ultra/game_probe.c
+	src/dc/ultra/game_probe.c src/dc/settings.c
 
 # Per-TU -O0 quarantine (GCC miscompile evidence goes in kb/traps.md). Starts empty.
 OPT_QUARANTINE_SRC :=
@@ -69,6 +69,8 @@ PORT_CFLAGS := $(COMMON) -O2 -std=gnu2x -Wall -Wextra -Wno-unused-parameter \
 # sh4zam library: docs/sh4zam-mandate.md N.1.10 minus LTO (no LTO before M6).
 SHZ_CFLAGS := $(COMMON) -O3 -std=gnu2x -fbuiltin -ffast-math -ffp-contract=fast -fmerge-all-constants \
 	-funroll-loops -fipa-pta -ftree-vectorize $(SHZ_DEFS) $(REL_DEFS)
+# Port feature switches (-DWINGS64_*, e.g. WINGS64_SETTINGS_MENU=0) reach the decomp TUs too; DB_* knobs do not.
+WINGS64_KNOBS := $(filter -DWINGS64_%,$(EXTRA_CFLAGS))
 # Decomp TUs: plain sh-elf-gcc (no KOS include paths, so decomp libc headers win), same ABI flags
 # as KOS_CFLAGS. IDO semantics: unsigned char, wrapping ints, no aliasing assumptions, no fmac.
 DECOMP_CC := $(KOS_CC_BASE)/bin/$(KOS_CC_PREFIX)-gcc
@@ -81,7 +83,7 @@ DECOMP_INC := -nostdinc -isystem $(shell $(DECOMP_CC) -print-file-name=include) 
 DECOMP_CFLAGS := $(DECOMP_ABI) $(COMMON) -Os -std=gnu11 -funsigned-char -fwrapv -fno-strict-aliasing \
 	-ffp-contract=off -ftrivial-auto-var-init=zero -fno-aggressive-loop-optimizations -include src/dc/decomp/wings64_prelude.h \
 	$(DECOMP_DEFS) $(DECOMP_INC) -Wno-multichar -Wno-implicit-int -Wno-implicit-function-declaration \
-	-Wno-return-type -Wno-int-conversion -Wno-incompatible-pointer-types $(REL_DEFS)
+	-Wno-return-type -Wno-int-conversion -Wno-incompatible-pointer-types $(REL_DEFS) $(WINGS64_KNOBS)
 # ^ -fno-aggressive-loop-optimizations: the decomp indexes past declared array bounds (IDO-era structs,
 #   patches/020); GCC must not shorten loops from those bounds.
 # ^ ILP32 like the VR4300: decomp int<->pointer casts are lossless on SH-4 (GCC 14 makes them errors).

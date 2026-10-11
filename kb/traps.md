@@ -131,3 +131,14 @@
 - Muting the console at `main()` changed OpenCrossing's boot timing and stopped it booting on
   hardware: arm the card after the game loop runs.
 - MBR FAT32 with 4 KB clusters; superfloppy cards don't enumerate.
+
+## Port settings menu (2026-10-11)
+- **uvFontGenDlist cannot run twice in a frame.** It restarts the font sprite display-list cursor at
+  base + messages-so-far, so a second call overwrites the commands of text already emitted that frame.
+  Extra text after the game's own goes through `uvFontOverlayStr_dc` (patches/021), which continues
+  from `rsp_dl_next`.
+- **Font 6 has two alphabets.** Its STRG holds a thin set first and the bold set the text tables use
+  second ("Option" = 0x78... is the second set). `uvFontPrintStr` picks the first match, the thin set,
+  so menu-looking strings must be built from the second set (`src/dc/settings.c` glyphs()).
+- **SD log ON in Flycast:** the SCIF probe can stall the main monitor thread (the gate markers come from it),
+  and once it has armed the serial console stays silent. Never leave the SD row ON in an emulator run.

@@ -11,7 +11,7 @@ SHZ     := external/sh4zam
 DECOMP_DIRS := src/kernel src/app src/libultra/audio src/libultra/sp
 DECOMP_SRC  := $(sort $(foreach d,$(DECOMP_DIRS),$(wildcard $(DECOMP)/$(d)/*.c)))
 DECOMPLIKE_SRC := src/dc/rom/pw64_audio_load.c src/dc/rom/pw64_rom_structs.c src/dc/rom/pw64_arena.c \
-	src/dc/ultra/ultra_data.c src/dc/rom/layout_checks.c src/dc/ultra/os_shim.c
+	src/dc/ultra/ultra_data.c src/dc/rom/layout_checks.c src/dc/ultra/os_shim.c src/dc/settings.c
 PORT_SRC := src/dc/test/hosttest.c src/dc/test/host_fatal.c src/dc/rom/romfs.c src/dc/rom/pw64_swap.c \
 	src/dc/ultra/mio0.c src/dc/test/host_bridge.c src/dc/ultra/rdram.c
 SHZ_SRC  := $(SHZ)/source/shz_matrix.c $(SHZ)/source/shz_quat.c $(SHZ)/source/shz_version.c \
