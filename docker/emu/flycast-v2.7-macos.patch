@@ -1,0 +1,74 @@
+diff --git a/core/deps/DreamPicoPort-API b/core/deps/DreamPicoPort-API
+--- a/core/deps/DreamPicoPort-API
++++ b/core/deps/DreamPicoPort-API
+@@ -1 +1 @@
+-Subproject commit e06d9f6c59833fc7bb7f2a33c960614489811ef8
++Subproject commit e06d9f6c59833fc7bb7f2a33c960614489811ef8-dirty
+diff --git a/core/deps/Syphon b/core/deps/Syphon
+--- a/core/deps/Syphon
++++ b/core/deps/Syphon
+@@ -1 +1 @@
+-Subproject commit 53ec412a78b246c84cedcb4a2a5b92852704d61d
++Subproject commit 53ec412a78b246c84cedcb4a2a5b92852704d61d-dirty
+diff --git a/core/hw/mem/addrspace.cpp b/core/hw/mem/addrspace.cpp
+index c08cb8ef6..596d3a4b2 100644
+--- a/core/hw/mem/addrspace.cpp
++++ b/core/hw/mem/addrspace.cpp
+@@ -7,6 +7,7 @@
+ #include "oslib/oslib.h"
+ #include "oslib/virtmem.h"
+ #include <cassert>
++#include <mutex>
+ 
+ namespace addrspace
+ {
+@@ -380,10 +381,13 @@ bool bm_lockedWrite(u8* address)
+ 
+ bool reserve()
+ {
+-	if (ram_base != nullptr)
+-		return true;
+-
+-	virtmem::init((void**)&ram_base, (void**)&p_sh4rcb, RAM_SIZE_MAX + VRAM_SIZE_MAX + ARAM_SIZE_MAX + elan::ERAM_SIZE_MAX);
++	// initMappings() can run on another thread (Emulator::init from the game-load thread) while the
++	// main thread is still in flycast_init(). Make the reservation exactly-once and blocking so that
++	// initMappings() never observes ram_base == nullptr and falls back to malloc'd RAM.
++	static std::once_flag reserveOnce;
++	std::call_once(reserveOnce, [] {
++		virtmem::init((void**)&ram_base, (void**)&p_sh4rcb, RAM_SIZE_MAX + VRAM_SIZE_MAX + ARAM_SIZE_MAX + elan::ERAM_SIZE_MAX);
++	});
+ 	return true;
+ }
+ 
+@@ -403,6 +407,7 @@ static void termMappings()
+ 
+ void initMappings()
+ {
++	reserve();	// idempotent; guarantees ram_base is set before choosing the vmem or fallback path
+ 	termMappings();
+ 	// Fallback to statically allocated buffers, this results in slow-ops being generated.
+ 	if (ram_base == nullptr)
+diff --git a/core/deps/Syphon/CMakeLists.txt b/core/deps/Syphon/CMakeLists.txt
+index 1cd5694..0b38e61 100644
+--- a/core/deps/Syphon/CMakeLists.txt
++++ b/core/deps/Syphon/CMakeLists.txt
+@@ -112,6 +112,7 @@ endif()
+ target_compile_options(Syphon PRIVATE "-fobjc-arc")
+ 
+ target_precompile_headers(Syphon PUBLIC "Syphon_Prefix.pch")
++target_compile_options(Syphon PRIVATE "-include" "${CMAKE_CURRENT_SOURCE_DIR}/Syphon_Prefix.pch")
+ 
+ target_include_directories(Syphon PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>")
+ target_compile_definitions(Syphon PRIVATE SYPHON_CORE_SHARE)
+diff --git a/core/deps/DreamPicoPort-API/src/DppDeviceImp.hpp b/core/deps/DreamPicoPort-API/src/DppDeviceImp.hpp
+index 1186699..0b94ede 100644
+--- a/core/deps/DreamPicoPort-API/src/DppDeviceImp.hpp
++++ b/core/deps/DreamPicoPort-API/src/DppDeviceImp.hpp
+@@ -32,6 +32,7 @@
+ #include <condition_variable>
+ #include <chrono>
+ #include <map>
++#include <unordered_map>
+ #include <thread>
+ 
+ namespace dpp_api

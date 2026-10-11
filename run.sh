@@ -38,9 +38,15 @@ cmd_test() { ## tree checks; without --ci also ROM slice, ILP32 host tests, deco
 cmd_run-hw() { ## print the .cdi to burn and the hardware checklist
     scripts/run_hw.sh "$@"
 }
-cmd_emu() { ## boot build/wings64-emu.cdi in Flycast with the serial console on
+cmd_emu() { ## native Flycast on the Mac (~/Applications/Flycast-wings64.app, docs/flycast-macos.md)
     local cdi=${1:-build/wings64-emu.cdi}
-    /Applications/Flycast.app/Contents/MacOS/Flycast -config config:Debug.SerialConsoleEnabled=yes "$ROOT/$cdi"
+    local fly=${FLYCAST_BIN:-$HOME/Applications/Flycast-wings64.app/Contents/MacOS/Flycast}
+    [ -x "$fly" ] || { echo "emu: $fly missing; build it per docs/flycast-macos.md, or use ./run.sh play" >&2; exit 1; }
+    mkdir -p "${TMPDIR:-/tmp}/wings64-flycast"
+    # Run outside the repo: a crashing emulator drops core files in its working directory.
+    (cd "${TMPDIR:-/tmp}/wings64-flycast" && "$fly" -config config:Debug.SerialConsoleEnabled=yes -config config:UseReios=yes \
+        "$ROOT/$cdi" > "$ROOT/build/emu-native.log" 2>&1 &)
+    echo "emu: Flycast started (log build/emu-native.log)"
 }
 cmd_play() { ## watch/play the emu image on the Mac (Flycast in the container, VNC -> Screen Sharing)
     scripts/emu_play.sh "$@"

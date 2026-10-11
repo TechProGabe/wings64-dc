@@ -101,13 +101,14 @@ static inline void *ram(uint32_t a) {
 
 /* --------------------------------------------------------------- matrices */
 
-static void mtx_from_n64(shz_mat4x4_t *out, const uint32_t *w) {
-    for (int e = 0; e < 16; e++) {
-        int sh = (e & 1) ? 0 : 16;
-        int32_t ip = (int16_t)(w[e >> 1] >> sh);
-        uint32_t fp = (w[8 + (e >> 1)] >> sh) & 0xFFFF;
-        out->elem[e] = (float)((ip << 16) | (int32_t)fp) * (1.0f / 65536.0f);
-    }
+/* N64 Mtx = Mtx_u { u16 i[4][4]; u16 f[4][4]; } (integer halves, then fraction halves). The game writes
+   them as u16 arrays (uvMat4CopyF2L) and ROM matrices are swapped per u16 (patches/013 "32h"), so in
+   SH-4 memory element e is halfword e, not "high half of word e/2" as on the big-endian N64. */
+static void mtx_from_n64(shz_mat4x4_t *out, const void *m) {
+    const int16_t *ip = (const int16_t *)m;
+    const uint16_t *fp = (const uint16_t *)m + 16;
+    for (int e = 0; e < 16; e++)
+        out->elem[e] = (float)(((int32_t)ip[e] << 16) | (int32_t)fp[e]) * (1.0f / 65536.0f);
 }
 
 static void do_mtx(uint32_t w0, uint32_t w1) {

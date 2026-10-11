@@ -108,3 +108,5 @@
 - KOS v2.2.2 `pvr_fog_vertex_color()` is `assert_msg(0, "not implemented")`: it aborts, the console
   reboots, and under Flycast's HLE BIOS the second boot panics ("couldn't find a runnable thread").
   Write PVR_FOG_VERTEX_COLOR (0xA05F80B4) directly. Vertex fog blends toward that register, not the table colour.
+- N64 `Mtx` is two u16 arrays (Mtx_u i[4][4], f[4][4]) written halfword by halfword: on little-endian SH-4
+  element e is halfword e. Decoding it as big-endian word halves swaps element pairs (title models mis-scaled).
