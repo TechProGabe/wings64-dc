@@ -42,6 +42,15 @@ cmd_emu() { ## boot build/wings64-emu.cdi in Flycast with the serial console on
     local cdi=${1:-build/wings64-emu.cdi}
     /Applications/Flycast.app/Contents/MacOS/Flycast -config config:Debug.SerialConsoleEnabled=yes "$ROOT/$cdi"
 }
+cmd_play() { ## watch/play the emu image on the Mac (Flycast in the container, VNC -> Screen Sharing)
+    scripts/emu_play.sh "$@"
+}
+cmd_gate() { ## the milestone gate: build the gate image (scripted input) and run it in the emulator
+    local script='8000:S:200,16000:A:200,30000:A:200'
+    EXTRA_CFLAGS="-DDB_AUTOPLAY=1 -DDB_AUTOPLAY_SCRIPT=\"\\\"$script\\\"\"" cmd_build
+    $CTR run scripts/make_cdi.sh --emu
+    EMU_RECORD=${EMU_RECORD:-45} scripts/emu_smoke.sh build/wings64-emu.cdi "" 90
+}
 cmd_smoke() { ## Flycast smoke: boot the emu image, wait for the milestone marker on serial
     scripts/emu_smoke.sh "$@"
 }

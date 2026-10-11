@@ -21,3 +21,5 @@ dc_env.local.sh
 external/pw64-decomp/
 disc/
 docs/evidence/
+core
+core.*

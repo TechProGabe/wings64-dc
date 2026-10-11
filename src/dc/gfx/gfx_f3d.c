@@ -22,6 +22,14 @@
 static uint64_t sT_vtx, sT_state, sT_conv, sT_emit, sT_other;
 #define TNOW() timer_us_gettime64()
 
+#if DB_GFX_TRACE
+static int sTrace;
+static uint32_t sListTris[3];
+#define TRACE(...) do { if (sTrace) db_log(__VA_ARGS__); } while (0)
+#else
+#define TRACE(...) ((void)0)
+#endif
+
 #define SCALE 2.0f                /* N64 320x240 -> 640x480 */
 #define MTX_DEPTH 11              /* gfx.md: 10 pushes + current */
 #define DL_DEPTH 18
@@ -329,6 +337,8 @@ static gpvr_tex_t *cur_tex;
 static float cur_tex_w, cur_tex_h, cur_uls, cur_ult;
 static int cur_shift_s, cur_shift_t;
 
+static unsigned sTexEffW, sTexEffH;   /* texel size the last texture_for_tile result was built from */
+
 static uint32_t sample_hash(const uint8_t *p, uint32_t bytes) {
     uint32_t h = 2166136261u, step = bytes > 64 ? bytes / 16 : 4;
     for (uint32_t i = 0; i + 4 <= bytes; i += step) { h ^= *(const uint32_t *)(p + (i & ~3u)); h *= 16777619u; }
@@ -336,9 +346,10 @@ static uint32_t sample_hash(const uint8_t *p, uint32_t bytes) {
 }
 
 static gpvr_tex_t *texture_for_tile(int tidx) {
+    /* TMEM is 4 KB: at most 8192 texels (4-bit) per load; PVR textures go up to 1024 wide. */
     static uint8_t raw[8192] __attribute__((aligned(32)));
-    static uint16_t conv[256 * 256] __attribute__((aligned(32)));
-    static uint16_t pow2buf[256 * 256] __attribute__((aligned(32)));
+    static uint16_t conv[16384] __attribute__((aligned(32)));
+    static uint16_t pow2buf[32768] __attribute__((aligned(32)));
     tile_t *t = &R.tile[tidx];
     tmemload_t *ld = &R.loads[(t->tmem >> 3) & 63];
     unsigned w = ((t->lrs - t->uls) >> 2) + 1, h = ((t->lrt - t->ult) >> 2) + 1;
@@ -349,11 +360,14 @@ static gpvr_tex_t *texture_for_tile(int tidx) {
     if (!ld->valid || t->line == 0) return NULL;
     if (t->masks && (1u << t->masks) < w) w = 1u << t->masks;
     if (t->maskt && (1u << t->maskt) < h) h = 1u << t->maskt;
-    if (w > 256 || h > 256) return NULL;
+    /* Tiles may declare more rows than were loaded (UVBT tile height, font atlases; gfx.md):
+       only loaded rows exist in TMEM. */
+    if (h > ld->bytes / line) h = ld->bytes / line;
+    if (w == 0 || h == 0 || w > 1024 || w * h > 16384) return NULL;
     bytes = line * h;
-    if (bytes > ld->bytes + 8) bytes = ld->bytes;
     if (bytes > sizeof raw) return NULL;
-    fmtkey = t->fmt | t->siz << 3 | w << 5 | h << 14 | (uint32_t)line << 23;
+    sTexEffW = w; sTexEffH = h;
+    fmtkey = t->fmt | t->siz << 3 | (w - 1) << 5 | (h - 1) << 15 | (uint32_t)(line & 0xFF) << 24;
     sample = sample_hash(ram(ld->addr), bytes);
     gt = gpvr_tex_lookup(ld->addr, fmtkey, sample);
     if (gt) return gt;
@@ -362,6 +376,7 @@ static gpvr_tex_t *texture_for_tile(int tidx) {
     pf = texconv_convert(raw, line, w, h, (n64_fmt_t)t->fmt, (n64_siz_t)t->siz, 1, conv, w, h);
     if (pf == PVRFMT_UNSUPPORTED) return NULL;
     pw = texconv_pow2(w); ph = texconv_pow2(h);
+    if (pw * ph > 32768) return NULL;
     /* Resample (nearest) to pow2 so wrap, mirror and clamp all keep working with u = s / w. */
     for (unsigned y = 0; y < ph; y++)
         for (unsigned x = 0; x < pw; x++)
@@ -410,10 +425,8 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
             st->flip = ((t->cms & 1) ? PVR_UVFLIP_U : 0) | ((t->cmt & 1) ? PVR_UVFLIP_V : 0);
             st->env = PVR_TXRENV_MODULATEALPHA;
             st->txr_alpha = 1;
-            cur_tex_w = (float)(((t->lrs - t->uls) >> 2) + 1);
-            cur_tex_h = (float)(((t->lrt - t->ult) >> 2) + 1);
-            if (t->masks && (float)(1 << t->masks) < cur_tex_w) cur_tex_w = (float)(1 << t->masks);
-            if (t->maskt && (float)(1 << t->maskt) < cur_tex_h) cur_tex_h = (float)(1 << t->maskt);
+            cur_tex_w = (float)sTexEffW;   /* the texel extent the PVR texture spans (mask/loaded-row clamped) */
+            cur_tex_h = (float)sTexEffH;
             cur_uls = t->uls * 0.25f; cur_ult = t->ult * 0.25f;
             cur_shift_s = t->shifts; cur_shift_t = t->shiftt;
         }
@@ -500,6 +513,9 @@ static void do_tri(int ia, int ib, int ic) {
         sT_conv += TNOW() - t; t = TNOW();
         gpvr_tri_pv(&v[0]->pv, &v[1]->pv, &v[2]->pv);
         sT_emit += TNOW() - t;
+#if DB_GFX_TRACE
+        sListTris[sState.list]++;
+#endif
         return;
     }
     {
@@ -570,6 +586,8 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
         rect_colors(0, &argb, &oargb);
     }
     gpvr_set_state(&st);
+    TRACE("  fill %d,%d-%d,%d cyc %d list %d argb %08lx oml %08lx cimg %08lx\n", ulx, uly, lrx, lry, cycle, st.list,
+          (unsigned long)argb, (unsigned long)R.oml, (unsigned long)R.cimg);
     screen_quad(ulx, uly, lrx, lry, 0, 0, 0, 0, 0, argb, oargb);
     DIRTY();
 }
@@ -600,6 +618,21 @@ static void do_texrect(uint32_t w0, uint32_t w1) {
     if (st.tex && (cycle == 2 || (x1 - x0) * fdx < 64.0f)) st.filter = PVR_FILTER_NEAREST; /* 1:1 blits (gfx.md) */
     gpvr_set_state(&st);
     rect_colors(st.tex != NULL, &argb, &oargb);
+    TRACE("  texrect %.0f,%.0f-%.0f,%.0f tile %d tex %d list %d argb %08lx cyc %d\n", x0, y0, x1, y1, tile,
+          st.tex != NULL, st.list, (unsigned long)argb, cycle);
+#if DB_GFX_TRACE
+    if (sTrace) {
+        tile_t *tt = &R.tile[tile];
+        tmemload_t *ld = &R.loads[(tt->tmem >> 3) & 63];
+        TRACE("    tile fmt %d siz %d line %d tmem %d s %d-%d t %d-%d mask %d/%d | load v%d addr %08lx bytes %lu dxt %d | oml %08lx ac %d\n",
+              tt->fmt, tt->siz, tt->line, tt->tmem, tt->uls >> 2, tt->lrs >> 2, tt->ult >> 2, tt->lrt >> 2, tt->masks, tt->maskt,
+              ld->valid, (unsigned long)ld->addr, (unsigned long)ld->bytes, ld->dxt, (unsigned long)R.oml, (int)(R.oml & 3));
+        if (ld->valid) {
+            const uint8_t *b = ram(ld->addr);
+            TRACE("    data %02x%02x%02x%02x %02x%02x%02x%02x\n", b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+        }
+    }
+#endif
     screen_quad(x0, y0, x1, y1, fs, ft, fs + (x1 - x0) * fdx, ft + (y1 - y0) * fdy, st.tex != NULL, argb, oargb);
     DIRTY();
 }
@@ -722,6 +755,7 @@ static void run_dl(const uint32_t *pc) {
 static int sInit;
 static uint32_t sFrames;
 
+
 void gfx_f3d_run(const void *dl) {
     if (!sInit) {
         sInit = 1;
@@ -733,7 +767,15 @@ void gfx_f3d_run(const void *dl) {
     t1 = timer_us_gettime64();
     DIRTY();
     R.mv_top = 0;
+#if DB_GFX_TRACE
+    sTrace = (sFrames % 15) == 0;
+    sListTris[0] = sListTris[1] = sListTris[2] = 0;
+    TRACE("trace frame %lu\n", (unsigned long)sFrames);
+#endif
     run_dl(dl);
+#if DB_GFX_TRACE
+    TRACE("  tris op %lu pt %lu tr %lu\n", (unsigned long)sListTris[0], (unsigned long)sListTris[1], (unsigned long)sListTris[2]);
+#endif
     t2 = timer_us_gettime64();
     gpvr_frame_end();
     t3 = timer_us_gettime64();

@@ -38,6 +38,7 @@ PORT_SRC := \
 	src/dc/ultra/fatal.c \
 	src/dc/ultra/kos_bridge.c \
 	src/dc/save/vmu_eeprom.c \
+	src/dc/autoplay.c \
 	src/dc/gfx/gfx_texconv.c \
 	src/dc/gfx/gfx_pvr.c \
 	src/dc/gfx/gfx_f3d.c \
@@ -54,7 +55,8 @@ DECOMP_DIRS := src/kernel src/app src/libultra/audio src/libultra/sp
 DECOMP_SRC  := $(sort $(foreach d,$(DECOMP_DIRS),$(wildcard $(DECOMP)/$(d)/*.c)))
 # Port TUs that include decomp headers (ultra64.h): compiled with the decomp flags.
 DECOMPLIKE_SRC := src/dc/rom/pw64_audio_load.c src/dc/rom/pw64_rom_structs.c src/dc/rom/pw64_arena.c \
-	src/dc/ultra/ultra_data.c src/dc/rom/layout_checks.c src/dc/ultra/os_shim.c
+	src/dc/ultra/ultra_data.c src/dc/rom/layout_checks.c src/dc/ultra/os_shim.c \
+	src/dc/ultra/game_probe.c
 
 # Per-TU -O0 quarantine (GCC miscompile evidence goes in kb/traps.md). Starts empty.
 OPT_QUARANTINE_SRC :=

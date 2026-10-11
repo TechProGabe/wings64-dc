@@ -9,9 +9,10 @@
 > hardware results, not emulator ones, as evidence.
 
 ## Where the port is
-M1 done 2026-10-10 (emulator PASS): patched decomp compiles and links for SH-4 and for an ILP32 host.
-Next: **M2** (`PLAN.md` §2): replace `src/dc/ultra/stubs_todo.c` with the OS shim, the memory map,
-the Fast3D interpreter, input. `src/dc/milestone.h` holds the gate's milestone number. Milestones are gated by
+M2 done 2026-10-11 (emulator gate PASS): the game boots on KOS threads, renders title/file menu/class
+select through the Fast3D->PVR interpreter, and takes controller input. **Paused here by the maintainer.**
+Next: **M3** (`PLAN.md` §2): bump `src/dc/milestone.h` to 3 and extend `./run.sh gate`'s script.
+To watch on the Mac: `./run.sh play` (VNC; docs/flycast-macos.md). Milestones are gated by
 `./run.sh smoke` (containerized Flycast; maintainer burns no discs). Host macOS Flycast is broken
 (`kb/traps.md`); always use the container.
 
@@ -41,7 +42,9 @@ The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
 ./run.sh release          # build/wings64-release.cdi (no db.o, NDEBUG)
 ./run.sh test [--ci]      # host tests + tree checks (--ci: no ROM needed)
 ./run.sh run-hw           # no cable: prints the .cdi path to burn + checklist
-./run.sh smoke            # THE GATE: containerized Flycast, waits for WINGS64_M<n>_OK, screenshots build/emu-shot-*.png
+./run.sh gate             # THE GATE: builds with the milestone's DB_AUTOPLAY script, runs smoke, records video
+./run.sh play             # Flycast in the container over VNC -> macOS Screen Sharing (password wings64)
+./run.sh smoke            # emulator smoke: containerized Flycast, waits for WINGS64_M<n>_OK, screenshots build/emu-shot-*.png
 ./run.sh shell            # shell inside the pinned container
 ./run.sh decomp-refresh   # re-fetch decomp at pin and re-apply patches/
 ./run.sh emu              # Flycast GUI on build/wings64-emu.cdi with serial console

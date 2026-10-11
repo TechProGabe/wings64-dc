@@ -18,7 +18,7 @@ RUN git clone -q --depth 1 --branch "$FLYCAST_TAG" --recurse-submodules --shallo
 FROM debian:bookworm
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         libsdl2-2.0-0 libgl1 libegl1 libgl1-mesa-dri libglx-mesa0 libzip4 libcurl4 libudev1 libgomp1 \
-        xvfb x11-apps x11-utils imagemagick procps \
+        xvfb x11-apps x11-utils imagemagick procps ffmpeg x11vnc \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/bin/flycast /usr/local/bin/flycast
 ENV SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1

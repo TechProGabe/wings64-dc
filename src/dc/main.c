@@ -31,6 +31,10 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
    makes the link resolve the whole game (kernel + app + libultra audio/sp) against the port. */
 extern void bootproc(void *arg);
 void wings64_rdram_init(void);
+int wings64_game_state(void);
+static const char *const kStateNames[] = { "title", "1", "test details", "pilot select", "test setup", "test update",
+    "results", "options", "demo pilot", "demo test setup", "file menu", "vehicle & class select", "test overview",
+    "results cb", "congratulations", "credits" };
 unsigned wings64_gfx_tasks(void), wings64_aud_tasks(void), wings64_vi_retraces(void), wings64_pi_zero_reads(void);
 void (*volatile wings64_decomp_entry)(void *) = bootproc;
 
@@ -162,17 +166,31 @@ done:
         wings64_rdram_init();
         db_log("boot: starting decomp bootproc\n");
         bootproc(NULL);
-        /* The game's scheduler thread owns the PVR from here (gfx_f3d.c); main only reports. */
-        for (unsigned s = 1;; s++) {
-            thd_sleep(1000);
-            db_log("game: t %u s gfx %u aud %u vi %u pi0 %u\n", s, wings64_gfx_tasks(), wings64_aud_tasks(),
-                   wings64_vi_retraces(), wings64_pi_zero_reads());
-            if (s == 5) db_log("WINGS64_M2_GAMELOOP\n");
-            db_sd_flush();
+        /* The game's scheduler thread owns the PVR from here (gfx_f3d.c); main only reports.
+           M2 gate: the state machine must pass title -> file menu -> vehicle & class select. */
+        int last = -2, seen_title = 0, seen_file = 0;
+        for (unsigned ms = 0;; ms += 250) {
+            int st = wings64_game_state();
+            thd_sleep(250);
+            if (st != last) {
+                db_log("state: %d (%s) at %u ms, gfx %u\n", st, st >= 0 && st < 16 ? kStateNames[st] : "?", ms,
+                       wings64_gfx_tasks());
+                if (st == 0) seen_title = 1;
+                if (st == 10 && seen_title) seen_file = 1;
+                if (st == 11 && seen_file) db_log("WINGS64_M2_OK\n");
+                last = st;
+            }
+            if (ms % 1000 == 0) {
+                db_log("game: t %u s gfx %u aud %u vi %u pi0 %u\n", ms / 1000, wings64_gfx_tasks(), wings64_aud_tasks(),
+                       wings64_vi_retraces(), wings64_pi_zero_reads());
+                if (ms == 5000) db_log("WINGS64_M2_GAMELOOP\n");
+                db_sd_flush();
+            }
         }
     }
     screen_line(ROW_RESULT, ok ? SCREEN_GREEN : SCREEN_RED, "M%d RESULT: %s", WINGS64_MILESTONE, ok ? "PASS" : "FAIL");
-    db_log("WINGS64_M%d_%s\n", WINGS64_MILESTONE, ok ? "OK" : "FAIL");
+    /* M0/M1 gates end here; from M2 the marker comes from the game's own state machine. */
+    if (WINGS64_MILESTONE < 2 || !ok) db_log("WINGS64_M%d_%s\n", WINGS64_MILESTONE, ok ? "OK" : "FAIL");
     db_sd_flush();
 
     for (;;) {

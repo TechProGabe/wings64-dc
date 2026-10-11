@@ -89,3 +89,17 @@
 - Host tests cannot run on the Mac (LP64, no -m32): 32-bit ARM cross + qemu-arm in the container.
   ARM EABI aligns 8-byte types to 8 (SH-4: 4), so layout asserts are compiled for SH-4 too.
 - `uvDbg_802339B0` colours 0x26 vertices across four arrays IDO placed back to back (patches/010).
+
+## Paid for in M2 (2026-10-11)
+- KOS genwait wakes from an IRQ only mark threads ready; the switch waits for the next tick. The shim sets
+  thd_set_hz(1000) and yields after thread-context sends to approximate N64 preemption.
+- osPiReadIo callers treat the word as bytes: copy it raw (big-endian N64 register image), not numerically.
+- Physical DC RAM is 0x0Cxxxxxx, which reads as F3D segment 12: addresses whose segment has no base are
+  physical (ram() in gfx_f3d.c). PW64 only sets segment 0 = 0.
+- PW64's F3D texrect is E4 + B3 (s,t) + B2 (dsdx,dtdy), not gbi.h's B4/B3 (geometry.c/sprite.c redefine).
+- UVBT/font tiles declare more rows than were loaded into TMEM; clamp to loaded bytes / line.
+- RDP rectangles have no shade: SHADE inputs read 0 (a white shade painted rect borders white).
+- Tracing with many db_log lines per frame slows the emulated game enough to shift timed autoplay input;
+  gate scripts use wide gaps.
+- Screenshots/videos render ROM assets: never commit them (rom_leak_check rejects images).
+- Official macOS Flycast crashes here; see docs/flycast-macos.md (`./run.sh play` = VNC workaround).

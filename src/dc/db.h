@@ -7,6 +7,9 @@
  *                 (FAT, first MBR partition). Never required; silently off if no card. Default 0.
  *   DB_PERF       on-screen per-phase timings (M2+). Default 0.
  *   DB_BOOT_LEVEL skip menus and boot straight into a level (M2+). Default -1 (off).
+ *   DB_GFX_TRACE  every 15th frame, log per-list triangle counts and each fill/tex rectangle.
+ *   DB_AUTOPLAY   scripted port-A input for the emulator gate (src/dc/autoplay.c); script in
+ *                 DB_AUTOPLAY_SCRIPT. Default 0.
  */
 #ifndef WINGS64_DB_H
 #define WINGS64_DB_H
@@ -19,6 +22,12 @@
 #endif
 #ifndef DB_PERF
 #define DB_PERF 0
+#endif
+#ifndef DB_GFX_TRACE
+#define DB_GFX_TRACE 0
+#endif
+#ifndef DB_AUTOPLAY
+#define DB_AUTOPLAY 0
 #endif
 #ifndef DB_BOOT_LEVEL
 #define DB_BOOT_LEVEL (-1)

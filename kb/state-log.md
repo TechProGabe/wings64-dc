@@ -1,5 +1,20 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — M2 gate PASS (emulator), build ee58e1dd-1011-1259
+- `./run.sh gate` (DB_AUTOPLAY script 8000:S,16000:A,30000:A): state title (500 ms) -> file menu
+  (17500 ms, gfx 231) -> vehicle & class select (30250 ms, gfx 488) -> WINGS64_M2_OK. Video:
+  build/evidence/m2-gate-emu.mp4 (untracked: renders ROM assets).
+- OS shim on KOS threads (os_shim.c + kos_bridge), patches 017 (RDRAM arena via N64_K0) and 018.
+  Fix on the way: osPiReadIo must copy the ROM word raw (callers read it as bytes; wrong order broke the
+  audio seq header read).
+- Fast3D interpreter (gfx_f3d.c + gfx_pvr.c): title, menus, fonts, sprites render. Profiling (emulator):
+  per-vertex combiner evaluation was 22-50 ms/frame -> per-state linear fit -> ~40 ms total DL time.
+- Fonts were invisible: IA4 font atlases are 432 texels wide and tiles declare more rows than TMEM
+  holds; converter now allows 1024 wide and clamps to loaded rows.
+- This game's older F3D numbers RDPHALF_1/2 as 0xB3/0xB2 (geometry.c, sprite.c): texrect halves are
+  taken by position.
+- Agents: texture converter, VMU save, F3D GBI header (908 checks), audio pool probe, tree checks.
+
 ## 2026-10-10 — M1 gate PASS (emulator), build 3b9d3a8d-1011-0200
 - Patches: Birdman64's 76 per-file patches (decomp 2529dab) applied by exact context (their @@ counts are
   off), 292 hunks sorted by reason. Kept 16 patches (bitfield 3, UB 8 incl. 3 own, yield 1, endian 4),
