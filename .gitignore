@@ -1,0 +1,20 @@
+# ROM material and disc images never enter the repo
+*.z64
+*.n64
+*.v64
+baserom*
+*.cdi
+*.iso
+*.gdi
+*.bin.scr
+1ST_READ.BIN
+build/
+build-dc/
+build-host/
+.venv/
+__pycache__/
+*.o
+*.elf
+*.map
+.DS_Store
+dc_env.local.sh
