@@ -22,15 +22,18 @@ RUN set -eux; \
         COREDIR=/usr/local/lib/ PLUGINDIR=/usr/local/lib/mupen64plus SHAREDIR=/usr/local/share/mupen64plus; \
     install -m 0755 ui/projects/unix/mupen64plus /usr/local/bin/mupen64plus; \
     rm -rf /src/core /src/ui
-# Plugins. video-rice is not built: its Makefile has no aarch64 CPU support (glide64mk2 is the default gfx).
+# Plugins. The 2.5.9 Makefiles of glide64mk2 and rice reject HOST_CPU=aarch64; rice is built as its generic
+# NO_ASM ARM path (HOST_CPU=arm64), which only changes CPU-specific code paths, not the GL readback.
 # glide64mk2 loads Glide64mk2.ini from the shared data dir, so that file is installed alongside it.
 RUN set -eux; \
     export CFLAGS=-fcommon; \
     cd /src; \
     install -d /usr/local/lib/mupen64plus; \
-    for p in video-glide64mk2 rsp-hle audio-sdl input-sdl; do \
+    for p in video-glide64mk2 video-rice rsp-hle audio-sdl input-sdl; do \
+        hostcpu=$(uname -m); \
+        if [ "$p" = video-rice ]; then hostcpu=arm64; fi; \
         git clone -q --depth 1 --branch 2.5.9 https://github.com/mupen64plus/mupen64plus-$p $p; \
-        make -C $p/projects/unix all -j"$(nproc)" APIDIR=/usr/include/mupen64plus; \
+        make -C $p/projects/unix all -j"$(nproc)" APIDIR=/usr/include/mupen64plus HOST_CPU=$hostcpu; \
         install -m 0644 $p/projects/unix/mupen64plus-*.so /usr/local/lib/mupen64plus/; \
         if [ -f $p/data/Glide64mk2.ini ]; then install -m 0644 $p/data/Glide64mk2.ini /usr/local/share/mupen64plus/; fi; \
         rm -rf $p; \

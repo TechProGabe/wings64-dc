@@ -58,7 +58,7 @@ cmd_gate() { ## the milestone gate: build the gate image (scripted input) and ru
         2) script='8000:S:200,16000:A:200,30000:A:200' ;;
         # M3: title -> Start game -> file 1 -> class select (stick right: rocket belt) -> pilot -> overview ->
         #     details -> start; no stick input: the test ends on its own and shows results.
-        *) script='8000:S:200,16000:A:200,30000:A:200,36000:>:300,40000:A:200,46000:A:200,52000:A:200,58000:A:200' ;;
+        *) script='8000:S:200,16000:A:200,30000:A:200,36000:>:300,40000:A:200,46000:A:200,52000:A:200,58000:A:200,70000:A:2500' ;;
     esac
     EXTRA_CFLAGS="-DDB_AUTOPLAY=1 -DDB_AUTOPLAY_SCRIPT=\"\\\"$script\\\"\"" cmd_build
     $CTR run scripts/make_cdi.sh --emu
