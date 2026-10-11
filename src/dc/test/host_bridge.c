@@ -38,3 +38,9 @@ void kb_pad_read(int port, kb_pad_t *out) { (void)port; memset(out, 0, sizeof *o
 void kb_memcpy(void *dst, const void *src, unsigned n) { memcpy(dst, src, n); }
 void kb_memset(void *dst, int v, unsigned n) { memset(dst, v, n); }
 void kb_log(const char *fmt, ...) { va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap); }
+
+/* db.c's settings-menu API (src/dc/settings.c); the host build has no SD logger. */
+int db_sd_available(void) { return 0; }
+int db_sd_enabled(void) { return 0; }
+void db_sd_set_enabled(int on) { (void)on; }
+const char *db_sd_status(void) { return "off"; }

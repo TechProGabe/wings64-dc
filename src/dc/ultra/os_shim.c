@@ -430,6 +430,21 @@ s32 osEepromLongWrite(OSMesgQueue *mq, u8 address, u8 *buffer, int nbytes) {
     return 0;
 }
 
+/* Port settings block (src/dc/settings.c): the last 8 bytes of the 2 KB image. The game cannot reach it:
+   uvFileRead/uvFileWrite (kernel/system.c, the only osEepromLong* callers) refuse offs + nbytes > 0x208.
+   DIVERGES: port settings menu (the N64 EEPROM past 0x208 is unused; the port keeps its two flags there) */
+#define PORT_BLOCK_OFS (EEPROM_BYTES - 8)
+int wings64_eeprom_port_read(unsigned char block[8]) {
+    if (!sEepromLoaded) { sEepromLoaded = 1; vmu_eeprom_load(sEeprom); }
+    kb_memcpy(block, &sEeprom[PORT_BLOCK_OFS], 8);
+    return 1;
+}
+int wings64_eeprom_port_write(const unsigned char block[8]) {
+    if (!sEepromLoaded) { sEepromLoaded = 1; vmu_eeprom_load(sEeprom); }
+    kb_memcpy(&sEeprom[PORT_BLOCK_OFS], block, 8);
+    return vmu_eeprom_save(sEeprom);
+}
+
 /* -------------------------------------------------------------------- init */
 
 void osInitialize(void) {
