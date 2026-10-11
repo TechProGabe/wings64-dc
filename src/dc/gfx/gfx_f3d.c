@@ -541,10 +541,9 @@ static COLD gpvr_tex_t *texture_for_tile(int tidx) {
         }
     }
 #endif
-    /* Resample (nearest) to pow2 so wrap, mirror and clamp all keep working with u = s / w. */
-    for (unsigned y = 0; y < ph; y++)
-        for (unsigned x = 0; x < pw; x++)
-            pow2buf[y * pw + x] = conv[(y * h / ph) * w + (x * w / pw)];
+    /* Resample (nearest) to pow2 so wrap, mirror and clamp all keep working with u = s / w.
+       (gfx_texconv.c, no per-texel divide unless -DWINGS64_FAST_TEXCONV=0) */
+    texconv_resample_pow2(conv, w, h, pow2buf, pw, ph);
     gt = gpvr_tex_insert(ld->addr, fmtkey, sample, pow2buf, pw, ph,
                          pf == PVRFMT_ARGB1555 ? PVR_TXRFMT_ARGB1555 : PVR_TXRFMT_ARGB4444);
 #if WINGS64_TEX_MEMO

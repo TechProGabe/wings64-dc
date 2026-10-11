@@ -95,7 +95,11 @@ DECOMP_DEFS := -D_LANGUAGE_C -DVERSION_US -DBUILD_VERSION=VERSION_D -D_FINALROM 
 DECOMP_INC := -nostdinc -isystem $(shell $(DECOMP_CC) -print-file-name=include) \
 	-Isrc/dc/decomp -I$(DECOMP) -I$(DECOMP)/src -I$(DECOMP)/include -I$(DECOMP)/include/kernel \
 	-I$(DECOMP)/include/libultra -I$(DECOMP)/include/libultra/PR -I$(DECOMP)/include/libultra/compiler/modern_gcc
-DECOMP_CFLAGS := $(DECOMP_ABI) $(COMMON) -Os -std=gnu11 -funsigned-char -fwrapv -fno-strict-aliasing \
+# docs/fps-plan.md section 3: the game's own code (app thread, ~15 ms of a hardware flight frame) at -O2
+# instead of -Os. Same IEEE single results (-ffp-contract=off kept, no excess precision on SH-4; purity
+# check guards FSRRA/FSCA). Kill switch: EXTRA_CFLAGS=-DWINGS64_DECOMP_O2=0 (all -Os).
+DECOMP_OPT := $(if $(filter -DWINGS64_DECOMP_O2=0,$(EXTRA_CFLAGS)),-Os,-O2)
+DECOMP_CFLAGS := $(DECOMP_ABI) $(COMMON) $(DECOMP_OPT) -std=gnu11 -funsigned-char -fwrapv -fno-strict-aliasing \
 	-ffp-contract=off -ftrivial-auto-var-init=zero -fno-aggressive-loop-optimizations -include src/dc/decomp/wings64_prelude.h \
 	$(DECOMP_DEFS) $(DECOMP_INC) -Wno-multichar -Wno-implicit-int -Wno-implicit-function-declaration \
 	-Wno-return-type -Wno-int-conversion -Wno-incompatible-pointer-types $(REL_DEFS) $(WINGS64_KNOBS)

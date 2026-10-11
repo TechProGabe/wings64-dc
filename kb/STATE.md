@@ -43,7 +43,8 @@ Screen shows, all green: `crc32 DAFCC147 manifest DAFCC147 match`, `UV files 127
    27 us per triangle. Next: hardware PC profile (DB_PROF disc, L+R+Start in flight and in a menu) ->
    tools/prof/decode_prof.py, then cut the top functions. Flycast per-phase timers distort (2x DL).
 2. Hardware visual bugs: cylinder under the Rocket Belt pilot and a big triangle/square under the hang
-   glider (maintainer; likely the shadow draw: cimg==zimg / decal path),
+   glider (maintainer; likely the shadow draw: cimg==zimg / decal path). The column REPRODUCES in Flycast
+   (gate shot ~132 s, camera looking up while the belt climbs; build/evidence/cylinder-repro-flycast.png),
    striped landing-target texture, pilots missing on pilot select, title pilots overlay sized wrong
    (maintainer, 2026-10-11; compare with scripts/n64_oracle.sh frames).
 3. Menu load stalls: 5-7 s with no controller polls after each menu change (N64 ~1 s; maintainer: "super

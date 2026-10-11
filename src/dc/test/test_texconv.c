@@ -31,7 +31,7 @@ static void ref_twiddle(const uint16_t *src, uint16_t *dst, unsigned w, unsigned
     for (unsigned blk = 0; blk < blocks; blk++) {
         for (unsigned k = 0; k < s * s; k++) {
             unsigned lx = 0, ly = 0;
-            for (unsigned b = 0; b < 4; b++) {
+            for (unsigned b = 0; b < 10; b++) {
                 ly |= ((k >> (2 * b)) & 1u) << b;
                 lx |= ((k >> (2 * b + 1)) & 1u) << b;
             }
@@ -41,6 +41,192 @@ static void ref_twiddle(const uint16_t *src, uint16_t *dst, unsigned w, unsigned
         }
     }
 }
+/* Deterministic pseudo-random source data (LCG, 15 bits per call). */
+static uint32_t rng_state = 12345;
+
+static unsigned rng_next(void)
+{
+    rng_state = rng_state * 1103515245u + 12345u;
+    return (rng_state >> 16) & 0x7FFF;
+}
+
+static void fill_rand_bytes(uint8_t *p, size_t n)
+{
+    for (size_t i = 0; i < n; i++)
+        p[i] = (uint8_t)rng_next();
+}
+
+static void fill_rand_u16(uint16_t *p, size_t n)
+{
+    for (size_t i = 0; i < n; i++)
+        p[i] = (uint16_t)((rng_next() << 1) ^ rng_next());
+}
+
+/* Reference convert: the original per-texel logic (copy of the pre-optimisation code). */
+static uint16_t ref_pix1555(unsigned r, unsigned g, unsigned b, unsigned a)
+{
+    return (uint16_t)((a << 15) | (r << 10) | (g << 5) | b);
+}
+
+static uint16_t ref_pix4444(unsigned r, unsigned g, unsigned b, unsigned a)
+{
+    return (uint16_t)((a << 12) | (r << 8) | (g << 4) | b);
+}
+
+static unsigned ref_nibble(const uint8_t *row, unsigned x)
+{
+    uint8_t byte = row[x >> 1];
+    return (x & 1) ? (byte & 0xF) : (byte >> 4);
+}
+
+static uint16_t ref_texel(const uint8_t *row, unsigned x, n64_fmt_t fmt, n64_siz_t siz, int ia)
+{
+    if (fmt == N64FMT_RGBA) {
+        if (siz == N64SIZ_16b) {
+            unsigned v = ((unsigned)row[2 * x] << 8) | row[2 * x + 1];
+            return ref_pix1555((v >> 11) & 31, (v >> 6) & 31, (v >> 1) & 31, v & 1);
+        }
+        return ref_pix4444(row[4 * x] >> 4, row[4 * x + 1] >> 4, row[4 * x + 2] >> 4, row[4 * x + 3] >> 4);
+    }
+    if (fmt == N64FMT_IA) {
+        if (siz == N64SIZ_4b) {
+            unsigned n = ref_nibble(row, x);
+            unsigned i3 = n >> 1;
+            unsigned i5 = (i3 << 2) | (i3 >> 1);
+            return ref_pix1555(i5, i5, i5, n & 1);
+        }
+        if (siz == N64SIZ_8b) {
+            unsigned i4 = row[x] >> 4;
+            return ref_pix4444(i4, i4, i4, row[x] & 0xF);
+        }
+        unsigned i4 = row[2 * x] >> 4;
+        return ref_pix4444(i4, i4, i4, row[2 * x + 1] >> 4);
+    }
+    if (siz == N64SIZ_4b) {
+        unsigned n = ref_nibble(row, x);
+        return ref_pix4444(n, n, n, ia ? n : 0xF);
+    }
+    unsigned i4 = row[x] >> 4;
+    return ref_pix4444(i4, i4, i4, ia ? i4 : 0xF);
+}
+
+static texconv_pvrfmt_t ref_convert(const uint8_t *src, unsigned line_bytes, unsigned w, unsigned h,
+                                    n64_fmt_t fmt, n64_siz_t siz, int ia, uint16_t *dst,
+                                    unsigned dst_w, unsigned dst_h)
+{
+    texconv_pvrfmt_t tgt = texconv_target(fmt, siz);
+    if (tgt == PVRFMT_UNSUPPORTED)
+        return tgt;
+    for (unsigned dy = 0; dy < dst_h; dy++) {
+        unsigned sy = dy < h ? dy : h - 1;
+        const uint8_t *row = src + sy * line_bytes;
+        for (unsigned dx = 0; dx < dst_w; dx++) {
+            unsigned sx = dx < w ? dx : w - 1;
+            dst[dy * dst_w + dx] = ref_texel(row, sx, fmt, siz, ia);
+        }
+    }
+    return tgt;
+}
+
+static void test_convert_random(void)
+{
+    static const struct { n64_fmt_t fmt; n64_siz_t siz; } fmts[] = {
+        { N64FMT_RGBA, N64SIZ_16b }, { N64FMT_RGBA, N64SIZ_32b },
+        { N64FMT_IA, N64SIZ_4b }, { N64FMT_IA, N64SIZ_8b }, { N64FMT_IA, N64SIZ_16b },
+        { N64FMT_I, N64SIZ_4b }, { N64FMT_I, N64SIZ_8b },
+    };
+    /* w, h, dst_w, dst_h */
+    static const unsigned shapes[][4] = {
+        { 1, 1, 1, 1 }, { 1, 1, 8, 8 }, { 13, 7, 16, 8 }, { 3, 3, 8, 8 }, { 5, 9, 16, 16 },
+        { 32, 4, 32, 8 }, { 7, 5, 7, 5 }, { 1, 5, 8, 8 }, { 6, 1, 8, 2 }, { 17, 11, 32, 16 },
+        { 64, 3, 64, 8 }, { 9, 9, 16, 16 }, { 2, 6, 8, 16 },
+    };
+    static uint8_t src[4096];
+    static uint16_t got[1024], want[1024];
+
+    for (unsigned f = 0; f < sizeof fmts / sizeof fmts[0]; f++) {
+        for (unsigned s = 0; s < sizeof shapes / sizeof shapes[0]; s++) {
+            for (int ia = 0; ia < 2; ia++) {
+                unsigned w = shapes[s][0], h = shapes[s][1];
+                unsigned dw = shapes[s][2], dh = shapes[s][3];
+                unsigned lb = texconv_line_bytes(w, fmts[f].siz);
+                fill_rand_bytes(src, lb * h);
+                memset(got, 0xAA, sizeof got);
+                memset(want, 0xAA, sizeof want);
+                texconv_pvrfmt_t r = texconv_convert(src, lb, w, h, fmts[f].fmt, fmts[f].siz, ia,
+                                                     got, dw, dh);
+                texconv_pvrfmt_t rw = ref_convert(src, lb, w, h, fmts[f].fmt, fmts[f].siz, ia,
+                                                  want, dw, dh);
+                char what[96];
+                snprintf(what, sizeof what, "convert fmt%u siz%u %ux%u->%ux%u ia%d",
+                         (unsigned)fmts[f].fmt, (unsigned)fmts[f].siz, w, h, dw, dh, ia);
+                expect_u(what, r, rw);
+                expect_mem(what, got, want, dw * dh * sizeof(uint16_t));
+            }
+        }
+    }
+
+    /* Unsupported combos are refused. */
+    static const struct { n64_fmt_t fmt; n64_siz_t siz; } bad[] = {
+        { N64FMT_RGBA, N64SIZ_4b }, { N64FMT_RGBA, N64SIZ_8b }, { N64FMT_IA, N64SIZ_32b },
+        { N64FMT_I, N64SIZ_16b }, { N64FMT_I, N64SIZ_32b }, { N64FMT_CI, N64SIZ_4b },
+        { N64FMT_YUV, N64SIZ_16b },
+    };
+    for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        texconv_pvrfmt_t r = texconv_convert(src, 8, 2, 2, bad[i].fmt, bad[i].siz, 1, got, 2, 2);
+        expect_u("convert unsupported refused", r, PVRFMT_UNSUPPORTED);
+    }
+}
+
+static void ref_resample(const uint16_t *src, unsigned w, unsigned h, uint16_t *dst, unsigned pw, unsigned ph)
+{
+    for (unsigned y = 0; y < ph; y++)
+        for (unsigned x = 0; x < pw; x++)
+            dst[y * pw + x] = src[(y * h / ph) * w + (x * w / pw)];
+}
+
+static void test_resample(void)
+{
+    /* w, h, pw, ph */
+    static const unsigned cases[][4] = {
+        { 13, 7, 16, 8 }, { 64, 64, 64, 64 }, { 100, 3, 128, 8 }, { 1, 1, 8, 8 },
+        { 320, 20, 512, 32 }, { 9, 4, 4, 2 }, { 7, 2, 3, 1 }, { 9, 4, 1, 1 },
+    };
+    static uint16_t src[8192], got[16384], want[16384];
+    for (unsigned c = 0; c < sizeof cases / sizeof cases[0]; c++) {
+        unsigned w = cases[c][0], h = cases[c][1], pw = cases[c][2], ph = cases[c][3];
+        fill_rand_u16(src, w * h);
+        memset(got, 0, sizeof got);
+        memset(want, 0, sizeof want);
+        texconv_resample_pow2(src, w, h, got, pw, ph);
+        ref_resample(src, w, h, want, pw, ph);
+        char what[96];
+        snprintf(what, sizeof what, "resample %ux%u->%ux%u", w, h, pw, ph);
+        expect_mem(what, got, want, pw * ph * sizeof(uint16_t));
+    }
+}
+
+static void test_twiddle_sizes(void)
+{
+    /* w, h */
+    static const unsigned dims[][2] = {
+        { 1024, 32 }, { 32, 1024 }, { 64, 64 }, { 8, 8 }, { 16, 64 }, { 64, 16 },
+        { 1, 1 }, { 1, 8 }, { 8, 1 }, { 2, 2 }, { 128, 8 }, { 8, 128 },
+    };
+    static uint16_t src[1024 * 32], got[1024 * 32], want[1024 * 32];
+    for (unsigned d = 0; d < sizeof dims / sizeof dims[0]; d++) {
+        unsigned w = dims[d][0], h = dims[d][1];
+        fill_rand_u16(src, w * h);
+        memset(got, 0, sizeof got);
+        memset(want, 0, sizeof want);
+        texconv_twiddle16(src, got, w, h);
+        ref_twiddle(src, want, w, h);
+        char what[64];
+        snprintf(what, sizeof what, "twiddle %ux%u vs ref", w, h);
+        expect_mem(what, got, want, w * h * sizeof(uint16_t));
+    }
+}
+
 
 static void test_target(void)
 {
@@ -238,6 +424,9 @@ int main(void)
     test_convert_formats();
     test_clamp_pad();
     test_twiddle();
+    test_convert_random();
+    test_twiddle_sizes();
+    test_resample();
 
     if (failures) {
         fprintf(stderr, "test_texconv: %d failure(s)\n", failures);

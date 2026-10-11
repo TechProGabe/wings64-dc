@@ -34,4 +34,8 @@ texconv_pvrfmt_t texconv_convert(const uint8_t *src, unsigned line_bytes, unsign
    position) and laid out linearly along the longer axis. src and dst are w*h u16 each; must not overlap. */
 void texconv_twiddle16(const uint16_t *src, uint16_t *dst, unsigned w, unsigned h);
 
+/* Nearest-neighbour resample of w x h u16 to pw x ph: dst[y*pw+x] = src[(y*h/ph)*w + x*w/pw].
+   Used to stretch a texture to a pow2 size. src and dst must not overlap. */
+void texconv_resample_pow2(const uint16_t *src, unsigned w, unsigned h, uint16_t *dst, unsigned pw, unsigned ph);
+
 #endif /* GFX_TEXCONV_H */
