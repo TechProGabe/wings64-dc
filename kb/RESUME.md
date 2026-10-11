@@ -1,0 +1,57 @@
+# RESUME — handoff for the executing LLM
+
+## Seed prompt (paste after a context flush)
+> You are executing wings64-dc, a native Dreamcast port of Pilotwings 64 from
+> its decomp. Read `CLAUDE.md`, `PLAN.md`, `docs/sh4zam-mandate.md`, then
+> `kb/STATE.md` for the current milestone. Work milestone by milestone; every
+> milestone ends with `./run.sh disc` producing a `.cdi` that boots. Use sh4zam
+> for all math. Never commit ROM material. Mark departures `DIVERGES`. Report
+> hardware results, not emulator ones, as evidence.
+
+## Where the port is
+Planning done 2026-10-10. No code. Next action: **M0** in `PLAN.md` §2.
+
+## Reference clones used for planning (re-clone when needed; shallow is fine)
+| what | where | pin |
+|---|---|---|
+| decomp | https://github.com/gcsmith/Pilotwings64Decomp | `1a8558f` |
+| sh4zam (user fork) | https://github.com/TechProGabe/sh4zam | master `7747e5d` (v0.9.1); docs on branch `docs-site` (`74a86bf`) |
+| ssb64-dc | https://github.com/beigeceleron/ssb64-dc | HEAD at 2026-10-10 |
+| Birdman64 | https://github.com/NoahVl/Birdman64 | v1.0 (2026-10-03) |
+| sm64-dc | https://github.com/jnmartin84/sm64-dc branch `ootpvr` | `6be7a00` |
+| sf64-dc | https://github.com/jnmartin84/sf64-dc | `4ed5c8d` |
+| mk64-dc | https://github.com/jnmartin84/mk64-dc | `1cbad2e` |
+| DCA3 mirror | https://github.com/emtee40/dca3-game | `02d0103` |
+| KallistiOS | https://github.com/KallistiOS/KallistiOS | tag v2.2.2 |
+| mkdcdisc | https://gitlab.com/simulant/mkdcdisc | ≥ v0.0.4 (2026-09-20) |
+
+The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
+(branch `docs-site`, `doc/site/dist/llms*.txt` and `dist/api/index.json` present).
+
+## Build lines (to be created in M0; names are the contract)
+```
+./run.sh setup            # container image at docker/pins.env, submodules, hooks
+./run.sh build            # build/wings64.elf
+./run.sh disc             # build/wings64.cdi      (padding on → CD-R)
+./run.sh disc --emu       # build/wings64-emu.cdi  (mkdcdisc -N)
+./run.sh release          # build/wings64-release.cdi (no db.o, NDEBUG)
+./run.sh test [--ci]      # host tests + tree checks (--ci: no ROM needed)
+./run.sh run-hw           # dc-tool push if a cable exists
+./run.sh decomp-refresh   # re-fetch decomp at pin and re-apply patches/
+flycast -config config:Debug.SerialConsoleEnabled=yes build/wings64-emu.cdi
+```
+
+## Measurement rules
+1. A number without a hardware run is a hypothesis. 2. Every perf change ships
+with a kill switch and a before/after pair (us/frame from `DB_PERF`, screenshot).
+3. Flycast cannot falsify a cache-locality claim. 4. Record numbers in
+`kb/STATE.md`, evidence in `kb/state-log.md` (newest first). 5. Replays
+(`DB_FDR_HASH`) must hash identically before and after any physics-adjacent change.
+
+## What is known to be hard (see PLAN.md §3)
+H1 endianness · H2 Fast3D→PVR fidelity · H3 alSyn→AICA · H4 scheduler semantics ·
+H5 IDO UB + fixed memory map · H6 float determinism · H7 ROM-in-RAM fit/load time.
+
+## Facts that live only in a human's head (ask the maintainer)
+dcload cable availability; VGA box; which console revision (VA0/VA1/VA2 — affects
+`-L data-data`); CD-R brand/speed that boots reliably.
