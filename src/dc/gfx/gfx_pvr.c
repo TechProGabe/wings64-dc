@@ -19,6 +19,7 @@ static const pvr_list_t list_id[3] = { PVR_LIST_OP_POLY, PVR_LIST_PT_POLY, PVR_L
 static gpvr_state_t cur[3];
 static int cur_valid[3];
 static int active = 0;           /* list of the current state */
+uint32_t gpvr_state_serial;      /* bumped whenever the active list or its header may have changed */
 static size_t used[3], cap[3];
 
 void gpvr_init(void) {
@@ -36,6 +37,7 @@ void gpvr_frame_begin(uint32_t bg_argb) {
     pvr_set_bg_color(((bg_argb >> 16) & 0xFF) / 255.0f, ((bg_argb >> 8) & 0xFF) / 255.0f, (bg_argb & 0xFF) / 255.0f);
     pvr_scene_begin();
     memset(cur_valid, 0, sizeof cur_valid);
+    gpvr_state_serial++;
     memset(used, 0, sizeof used);
 }
 
@@ -87,8 +89,10 @@ static void compile_and_emit(const gpvr_state_t *st) {
 }
 
 void gpvr_set_state(const gpvr_state_t *st) {
+    if (active != st->list) gpvr_state_serial++;
     active = st->list;
     if (cur_valid[active] && memcmp(&cur[active], st, sizeof *st) == 0) return;
+    gpvr_state_serial++;
     cur[active] = *st;
     cur_valid[active] = 1;
     gpvr_stats.state_changes++;

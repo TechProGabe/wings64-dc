@@ -19,8 +19,17 @@
 #include <sh4zam/shz_sh4zam.h>
 
 /* DB_PERF-style phase accounting (microseconds, emulated or real). */
-static uint64_t sT_vtx, sT_state, sT_conv, sT_emit, sT_other;
+static uint64_t sT_vtx, sT_state, sT_conv, sT_emit, sT_other, sT_fit, sT_tex, sT_set;
+/* Per-phase interpreter timers read the TMU several times per triangle; that costs real frame time,
+   so they only exist in a -DDB_GFX_PROF=1 build. Frame-level timing (gfx: wait/dl/finish) stays on. */
+#ifndef DB_GFX_PROF
+#define DB_GFX_PROF 0
+#endif
+#if DB_GFX_PROF
 #define TNOW() timer_us_gettime64()
+#else
+#define TNOW() ((uint64_t)0)
+#endif
 
 #if DB_GFX_TRACE
 static int sTrace;
@@ -70,6 +79,7 @@ static struct {
     uint32_t geom, omh, oml;
     uint32_t cc0, cc1;
     float prim[4], env[4], fogc[4], blend[4];
+    uint32_t prim_raw, env_raw;           /* RGBA8888 as sent: combiner-fit cache key */
     uint32_t fill;
     int16_t fog_m, fog_o;
     int tex_on, tex_tile;
@@ -334,6 +344,47 @@ static void combine(const vtx_t *v, int fogging, lin_t out[4]) {
     memcpy(out, comb, sizeof comb);
 }
 
+/* Combiner compile + fit depend only on (cc0, cc1, cycle type, fog, prim, env): cache them.
+   Kill switch: -DWINGS64_CC_CACHE=0 recomputes on every draw-state change. */
+#ifndef WINGS64_STATE_SKIP
+#define WINGS64_STATE_SKIP 1
+#endif
+#ifndef WINGS64_CC_CACHE
+#define WINGS64_CC_CACHE 1
+#endif
+#if WINGS64_CC_CACHE
+#define CC_CACHE_SLOTS 128
+static struct {
+    uint32_t cc0, cc1, prim, env, flags;   /* flags bit0 two_cycle, bit1 fog, bit31 valid */
+    __typeof__(sCC) cc;
+    __typeof__(sFit) fit;
+} sCcCache[CC_CACHE_SLOTS];
+uint32_t gfx_cc_cache_hits, gfx_cc_cache_misses;
+#endif
+
+static void cc_prepare(int two_cycle, int fogging) {
+#if WINGS64_CC_CACHE
+    uint32_t flags = 0x80000000u | (two_cycle ? 1u : 0u) | (fogging ? 2u : 0u);
+    uint32_t h = R.cc0 * 0x9E3779B1u ^ R.cc1 * 0x85EBCA77u ^ R.prim_raw * 0xC2B2AE3Du ^ R.env_raw * 0x27D4EB2Fu ^ flags;
+    unsigned slot = (h ^ (h >> 15)) & (CC_CACHE_SLOTS - 1);
+    if (sCcCache[slot].flags == flags && sCcCache[slot].cc0 == R.cc0 && sCcCache[slot].cc1 == R.cc1 &&
+        sCcCache[slot].prim == R.prim_raw && sCcCache[slot].env == R.env_raw) {
+        sCC = sCcCache[slot].cc;
+        sFit = sCcCache[slot].fit;
+        gfx_cc_cache_hits++;
+        return;
+    }
+    gfx_cc_cache_misses++;
+#endif
+    cc_compile(two_cycle);
+    cc_fit(fogging);
+#if WINGS64_CC_CACHE
+    sCcCache[slot].cc0 = R.cc0; sCcCache[slot].cc1 = R.cc1; sCcCache[slot].prim = R.prim_raw;
+    sCcCache[slot].env = R.env_raw; sCcCache[slot].flags = flags;
+    sCcCache[slot].cc = sCC; sCcCache[slot].fit = sFit;
+#endif
+}
+
 /* float -> 0..255 via a signed conversion (ftrc); an unsigned cast calls into libgcc on SH-4. */
 static inline uint32_t clamp8(float f) { int i = (int)(f * 255.0f); return i < 0 ? 0u : i > 255 ? 255u : (uint32_t)i; }
 
@@ -349,6 +400,7 @@ static gpvr_state_t sState;
 static gpvr_tex_t *cur_tex;
 static float cur_tex_w, cur_tex_h, cur_uls, cur_ult;
 static int cur_shift_s, cur_shift_t;
+static float cur_u_scale, cur_u_off, cur_v_scale, cur_v_off;
 
 static unsigned sTexEffW, sTexEffH;
 static const char *sTexMiss;          /* why the last texture_for_tile returned NULL (trace) */   /* texel size the last texture_for_tile result was built from */
@@ -428,8 +480,9 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
     int zb = (R.geom & F3D_G_ZBUFFER) && !depth_override_always;
     memset(st, 0, sizeof *st);
-    cc_compile(cycle == 1);
-    cc_fit((R.geom & F3D_G_FOG) != 0);
+    { uint64_t t0 = TNOW();
+    cc_prepare(cycle == 1, (R.geom & F3D_G_FOG) != 0);
+    sT_fit += TNOW() - t0; }
 #ifdef DB_GFX_SOLID
     /* debug: every triangle opaque, untextured, white -> screen coverage only */
     memset(st, 0, sizeof *st); st->list = GPVR_OP; st->depth_cmp = PVR_DEPTHCMP_GEQUAL; st->depth_write = 1;
@@ -456,7 +509,7 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
     cur_tex = NULL;
     if (textured_possible && R.tex_on) {
         tile_t *t = &R.tile[R.tex_tile];
-        cur_tex = texture_for_tile(R.tex_tile);
+        { uint64_t t0 = TNOW(); cur_tex = texture_for_tile(R.tex_tile); sT_tex += TNOW() - t0; }
 #if DB_GFX_TRACE
         if (!cur_tex && sTrace)
             db_log("  texmiss %s tile %d fmt %d siz %d line %d tmem %d s %d-%d t %d-%d mask %d/%d load %d bytes %lu dxt %d cc %08lx:%08lx\n",
@@ -480,6 +533,8 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
             cur_tex_h = (float)sTexEffH;
             cur_uls = t->uls * 0.25f; cur_ult = t->ult * 0.25f;
             cur_shift_s = t->shifts; cur_shift_t = t->shiftt;
+            cur_u_scale = shift_scale(cur_shift_s) / cur_tex_w; cur_u_off = cur_uls / cur_tex_w;
+            cur_v_scale = shift_scale(cur_shift_t) / cur_tex_h; cur_v_off = cur_ult / cur_tex_h;
         }
     }
     return st->list;
@@ -505,8 +560,8 @@ static void to_pvr(const vtx_t *v, pvr_vertex_t *o, int textured, int decal) {
     o->y = (R.vp_ty - v->y * iw * R.vp_sy) * SCALE;
     o->z = decal ? iw * 1.003f : iw;
     if (textured) {
-        o->u = ((v->s * shift_scale(cur_shift_s)) - cur_uls) / cur_tex_w;
-        o->v = ((v->t * shift_scale(cur_shift_t)) - cur_ult) / cur_tex_h;
+        o->u = v->s * cur_u_scale - cur_u_off;   /* ((s * shift) - uls) / w, folded per draw state */
+        o->v = v->t * cur_v_scale - cur_v_off;
         o->argb = (clamp8(c[3].m != 0.0f ? c[3].m : c[3].k) << 24) | (clamp8(c[0].m) << 16) | (clamp8(c[1].m) << 8) | clamp8(c[2].m);
     } else {
         o->u = o->v = 0.0f;
@@ -609,7 +664,17 @@ static void do_tri(int ia, int ib, int ic) {
                    (int)(R.env[0] * 255), (int)(R.env[1] * 255), (int)(R.env[2] * 255));
 #endif
     }
-    gpvr_set_state(&sState);
+    {
+        /* Skip the per-triangle header compare when nothing changed since this state was last sent.
+           Kill switch: -DWINGS64_STATE_SKIP=0. */
+        static uint32_t sSentSerial, sSentEpoch;
+        uint64_t t0 = TNOW();
+        if (!WINGS64_STATE_SKIP || sSentEpoch != sStateEpoch || sSentSerial != gpvr_state_serial) {
+            gpvr_set_state(&sState);
+            sSentEpoch = sStateEpoch; sSentSerial = gpvr_state_serial;
+        }
+        sT_set += TNOW() - t0;
+    }
     sT_state += TNOW() - t; }
     textured = sState.tex != NULL;
     decal = ((R.oml >> 10) & 3) == 3;
@@ -868,9 +933,11 @@ static void run_dl(const uint32_t *pc) {
             if (R.timg_siz == 0) ld->bytes = (lrs + 2) / 2;
         } break;
         case F3D_G_SETCOMBINE: R.cc0 = w0; R.cc1 = w1; break;
-        case F3D_G_SETPRIMCOLOR: R.prim[0] = ((w1 >> 24) & 0xFF) / 255.0f; R.prim[1] = ((w1 >> 16) & 0xFF) / 255.0f;
+        case F3D_G_SETPRIMCOLOR: if (R.prim_raw != w1) DIRTY(); R.prim_raw = w1;
+                                 R.prim[0] = ((w1 >> 24) & 0xFF) / 255.0f; R.prim[1] = ((w1 >> 16) & 0xFF) / 255.0f;
                                  R.prim[2] = ((w1 >> 8) & 0xFF) / 255.0f; R.prim[3] = (w1 & 0xFF) / 255.0f; break;
-        case F3D_G_SETENVCOLOR: R.env[0] = ((w1 >> 24) & 0xFF) / 255.0f; R.env[1] = ((w1 >> 16) & 0xFF) / 255.0f;
+        case F3D_G_SETENVCOLOR: if (R.env_raw != w1) DIRTY(); R.env_raw = w1;
+                                R.env[0] = ((w1 >> 24) & 0xFF) / 255.0f; R.env[1] = ((w1 >> 16) & 0xFF) / 255.0f;
                                 R.env[2] = ((w1 >> 8) & 0xFF) / 255.0f; R.env[3] = (w1 & 0xFF) / 255.0f; break;
         case F3D_G_SETFOGCOLOR: gpvr_fog_color(0xFF000000u | (w1 >> 8)); break;
         case F3D_G_SETBLENDCOLOR: break;
@@ -933,8 +1000,12 @@ void gfx_f3d_run(const void *dl) {
     if (++sFrames % 30 == 0) {
         db_log("gfx: wait %lu us, dl %lu us, finish %lu us, resets %lu\n", (unsigned long)(t1 - t0),
                (unsigned long)(t2 - t1), (unsigned long)(t3 - t2), (unsigned long)gpvr_stats.resets);
-        db_log("gfx: 30f us: vtx %lu state %lu conv %lu emit %lu\n", (unsigned long)sT_vtx, (unsigned long)sT_state,
-               (unsigned long)sT_conv, (unsigned long)sT_emit);
+        if (DB_GFX_PROF) db_log("gfx: 30f us: vtx %lu state %lu conv %lu emit %lu | fit %lu tex %lu set %lu\n", (unsigned long)sT_vtx, (unsigned long)sT_state,
+               (unsigned long)sT_conv, (unsigned long)sT_emit, (unsigned long)sT_fit, (unsigned long)sT_tex, (unsigned long)sT_set);
+        sT_fit = sT_tex = sT_set = 0;
+#if WINGS64_CC_CACHE
+        db_log("gfx: cc cache hit %lu miss %lu\n", (unsigned long)gfx_cc_cache_hits, (unsigned long)gfx_cc_cache_misses);
+#endif
         sT_vtx = sT_state = sT_conv = sT_emit = sT_other = 0;
         db_log("gfx: frame %lu tris %lu states %lu tex up %lu hit %lu ovf %lu\n", (unsigned long)sFrames,
                (unsigned long)gpvr_stats.tris, (unsigned long)gpvr_stats.state_changes,

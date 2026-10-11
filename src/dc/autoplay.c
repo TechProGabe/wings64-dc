@@ -4,6 +4,10 @@
  * Script (DB_AUTOPLAY_SCRIPT): "ms:BUTTONS:hold_ms,..." with BUTTONS from S(tart) A B Z L R U D l r
  * (U/D/l/r = D-pad up/down/left/right; > < ^ v = analog stick full right/left/up/down).
  * Example: "10000:S:150,14000:A:150,20000:>:300".
+ * A step time may be state-relative: "s11+2000:>:300" = 2 s after controller reads (re)start while the
+ * game state (D_80362690->state, see game_probe.c) is 11: on entry, and again after any >0.5 s gap
+ * (menus poll briefly, then stop while they load). It fires only while the game is in that state. Menu loads stop polling for seconds and
+ * vary run to run, so gate scripts use this form.
  */
 #include "db.h"
 
@@ -29,7 +33,12 @@
 #define N_L 0x0020
 #define N_R 0x0010
 
-typedef struct { uint32_t at, hold; uint16_t buttons; int8_t sx, sy; } step_t;
+typedef struct { uint32_t at, hold, polls; int16_t state; uint16_t buttons; int8_t sx, sy; uint64_t start; } step_t;
+extern int wings64_game_state(void);
+static int64_t sStateEntered[64];   /* ms polling (re)started in each game state: entry or end of a load gap; -1 = not yet */
+/* A press lasts its hold time AND at least AUTOPLAY_MIN_POLLS controller reads: the game stops polling
+   for seconds after menu changes, and a press that falls in such a gap would otherwise be lost. */
+#define AUTOPLAY_MIN_POLLS 3
 static step_t steps[64];
 static int nsteps = -1;
 static uint64_t t0;
@@ -39,6 +48,11 @@ static void parse(void) {
     nsteps = 0;
     while (*p && nsteps < 64) {
         step_t s = { 0 };
+        s.state = -1;
+        if (*p == 's') {
+            s.state = (int16_t)strtol(p + 1, (char **)&p, 10);
+            if (*p == '+') p++;
+        }
         s.at = (uint32_t)strtoul(p, (char **)&p, 10);
         if (*p == ':') p++;
         for (; *p && *p != ':'; p++) {
@@ -62,15 +76,33 @@ static void parse(void) {
 int wings64_autoplay(uint32_t poll, uint16_t *buttons, int8_t *sx, int8_t *sy) {
     uint64_t now;
     (void)poll;
-    if (nsteps < 0) { parse(); t0 = timer_ms_gettime64(); }
+    if (nsteps < 0) {
+        parse(); t0 = timer_ms_gettime64();
+        for (int i = 0; i < 64; i++) sStateEntered[i] = -1;
+    }
     now = timer_ms_gettime64() - t0;
+
     {
         static uint64_t last;
-        if (last && now - last > 500) db_log("autoplay: poll gap %lu ms at %lu ms\n", (unsigned long)(now - last), (unsigned long)now);
+        static int last_st = -2;
+        int st = wings64_game_state(), gap = last && now - last > 500;
+        if (gap) db_log("autoplay: poll gap %lu ms at %lu ms\n", (unsigned long)(now - last), (unsigned long)now);
+        /* menus poll briefly on entry, then stop for seconds while they load: re-arm after a gap */
+        if (st >= 0 && st < 64 && (st != last_st || gap)) sStateEntered[st] = (int64_t)now;
+        last_st = st;
         last = now;
     }
     for (int i = 0; i < nsteps; i++) {
-        if (now >= steps[i].at && now < (uint64_t)steps[i].at + steps[i].hold) {
+        uint64_t at = steps[i].at;
+        if (steps[i].polls) at = steps[i].start;               /* started: its window is fixed */
+        else if (steps[i].state >= 0) {
+            if (steps[i].state >= 64 || sStateEntered[steps[i].state] < 0) continue;
+            if (wings64_game_state() != steps[i].state) continue;   /* only fire while in that state */
+            at += (uint64_t)sStateEntered[steps[i].state];
+        }
+        if (now >= at && (now < at + steps[i].hold || steps[i].polls < AUTOPLAY_MIN_POLLS)) {
+            if (!steps[i].polls) steps[i].start = now;
+            steps[i].polls++;
             static int logged[64];
             if (!logged[i]) {
                 logged[i] = 1;

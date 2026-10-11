@@ -19,6 +19,7 @@
  *                 Default = DB_ENABLE. DB_CRASH_TEST executes an illegal instruction on the main thread at 10 s to exercise it.
  *   DB_PERF       on-screen per-phase timings (M2+). Default 0.
  *   DB_BOOT_LEVEL skip menus and boot straight into a level (M2+). Default -1 (off).
+ *   DB_GFX_PROF   per-phase interpreter timers (vtx/state/conv/emit/fit/tex/set) in the 30-frame log.
  *   DB_GFX_TRACE  every 15th frame, log per-list triangle counts and each fill/tex rectangle.
  *   DB_AUTOPLAY   scripted port-A input for the emulator gate (src/dc/autoplay.c); script in
  *                 DB_AUTOPLAY_SCRIPT. Default 0.

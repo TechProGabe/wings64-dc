@@ -58,7 +58,8 @@ cmd_gate() { ## the milestone gate: build the gate image (scripted input) and ru
         2) script='8000:S:200,16000:A:200,30000:A:200' ;;
         # M3: title -> Start game -> file 1 -> class select (stick right: rocket belt) -> pilot -> overview ->
         #     details -> start; no stick input: the test ends on its own and shows results.
-        *) script='8000:S:200,16000:A:200,30000:A:200,37000:>:300,40000:A:200,46000:A:200,52000:A:200,58000:A:200,70000:A:2500' ;;
+        #     Steps are relative to the first poll in each game state (s<state>+ms): load pauses vary.
+        *) script='s0+7500:S:200,s0+15500:A:200,s10+5500:A:200,s11+5500:>:300,s11+8500:A:200,s3+5500:A:200,s12+5500:A:200,s2+5500:A:200,s5+4000:A:2500' ;;
     esac
     # GATE_CFLAGS: extra debug knobs for a traced gate run, e.g. GATE_CFLAGS=-DDB_GFX_TRACE=1
     EXTRA_CFLAGS="-DDB_AUTOPLAY=1 -DDB_AUTOPLAY_SCRIPT=\"\\\"$script\\\"\" ${GATE_CFLAGS:-}" cmd_build

@@ -31,7 +31,8 @@ docker run --rm -v "$ROOT:/work" -w /work -e HOME=/tmp -e EMU_SHOTS="${EMU_SHOTS
     pid=$!
     if [ -n "$EMU_RECORD" ]; then
         rm -f build/emu-run.mp4
-        ffmpeg -loglevel error -f x11grab -framerate 30 -video_size 640x480 -i :99.0+80,60 -t "$EMU_RECORD" \
+        # bounded: a stalled X server or emulator must not keep the container alive past the run
+        timeout -s INT $(( EMU_RECORD + 30 )) ffmpeg -loglevel error -f x11grab -framerate 30 -video_size 640x480 -i :99.0+80,60 -t "$EMU_RECORD" \
             -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p build/emu-run.mp4 &
         rec=$!
     fi
@@ -51,6 +52,7 @@ docker run --rm -v "$ROOT:/work" -w /work -e HOME=/tmp -e EMU_SHOTS="${EMU_SHOTS
     sleep 3; xwd -root -silent | convert xwd:- build/emu-shot-1.png
     sleep 5; xwd -root -silent | convert xwd:- build/emu-shot-2.png
     [ -n "$EMU_RECORD" ] && wait $rec
+    true
     kill $pid 2>/dev/null; sleep 1; kill -9 $pid 2>/dev/null
     exit $rc
 ' bash "$cdi" "$marker" "$timeout"

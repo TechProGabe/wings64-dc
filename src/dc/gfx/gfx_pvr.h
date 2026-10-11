@@ -37,6 +37,9 @@ void gpvr_init(void);
 void gpvr_frame_begin(uint32_t bg_argb);
 void gpvr_frame_end(void);
 void gpvr_set_state(const gpvr_state_t *st);
+/* Changes whenever the PVR side's active list/header may differ from the last gpvr_set_state: a caller
+   that set the same state and sees the same serial may skip the call. */
+extern uint32_t gpvr_state_serial;
 /* One triangle in the current state's list. Vertices in any winding (culling is done before). */
 void gpvr_tri(const gpvr_vtx_t *a, const gpvr_vtx_t *b, const gpvr_vtx_t *c);
 void gpvr_fog_color(uint32_t argb);
