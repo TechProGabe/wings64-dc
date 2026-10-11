@@ -32,7 +32,9 @@ static float sMinW, sMaxW;
 #endif
 
 #define SCALE 2.0f                /* N64 320x240 -> 640x480 */
+#ifndef MTX_DEPTH
 #define MTX_DEPTH 11              /* gfx.md: 10 pushes + current */
+#endif
 #define DL_DEPTH 18
 
 /* ------------------------------------------------------------------ state */
@@ -115,6 +117,12 @@ static void do_mtx(uint32_t w0, uint32_t w1) {
     shz_mat4x4_t m __attribute__((aligned(8))), tmp __attribute__((aligned(8)));
     uint8_t p = (w0 >> 16) & 0xFF;
     mtx_from_n64(&m, ram(w1));
+#if DB_GFX_TRACE
+    if (sTrace && (p & F3D_G_MTX_PROJECTION))
+        db_log("  proj %s %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f\n",
+               (p & F3D_G_MTX_LOAD) ? "load" : "mul", m.elem[0], m.elem[1], m.elem[2], m.elem[3], m.elem[4], m.elem[5],
+               m.elem[6], m.elem[7], m.elem[8], m.elem[9], m.elem[10], m.elem[11], m.elem[12], m.elem[13], m.elem[14], m.elem[15]);
+#endif
     if (p & F3D_G_MTX_PROJECTION) {
         if (p & F3D_G_MTX_LOAD) shz_mat4x4_copy(&R.proj, &m);
         else { shz_xmtrx_load_apply_store_4x4(&tmp, &R.proj, &m); shz_mat4x4_copy(&R.proj, &tmp); }
@@ -259,10 +267,12 @@ static lin_t src_val(int s, int ch, const vtx_t *v, lin_t comb, lin_t comb_a, in
     }
 }
 
+/* (a - b) * c + d on texel-linear values. A texel*texel term (e.g. TEXEL0*TEXEL1, the water and
+   detail combiners) cannot be expressed per vertex; with TEXEL1 = TEXEL0 it is approximated T*T ~ T. */
 static lin_t eval(lin_t a, lin_t b, lin_t c, lin_t d) {
     lin_t ab = { a.m - b.m, a.k - b.k }, r;
-    if (ab.m == 0.0f) { r.m = ab.k * c.m; r.k = ab.k * c.k; }
-    else { r.m = ab.m * c.k; r.k = ab.k * c.k; }  /* texel*texel terms are approximated away */
+    r.m = ab.m * c.m + ab.m * c.k + ab.k * c.m;
+    r.k = ab.k * c.k;
     r.m += d.m; r.k += d.k;
     return r;
 }
@@ -344,7 +354,8 @@ static gpvr_tex_t *cur_tex;
 static float cur_tex_w, cur_tex_h, cur_uls, cur_ult;
 static int cur_shift_s, cur_shift_t;
 
-static unsigned sTexEffW, sTexEffH;   /* texel size the last texture_for_tile result was built from */
+static unsigned sTexEffW, sTexEffH;
+static const char *sTexMiss;          /* why the last texture_for_tile returned NULL (trace) */   /* texel size the last texture_for_tile result was built from */
 
 static uint32_t sample_hash(const uint8_t *p, uint32_t bytes) {
     uint32_t h = 2166136261u, step = bytes > 64 ? bytes / 16 : 4;
@@ -360,16 +371,19 @@ static gpvr_tex_t *texture_for_tile(int tidx) {
     tile_t *t = &R.tile[tidx];
     tmemload_t *ld = &R.loads[(t->tmem >> 3) & 63];
     unsigned w = ((t->lrs - t->uls) >> 2) + 1, h = ((t->lrt - t->ult) >> 2) + 1;
-    unsigned line = t->line * 8, bytes, pw, ph;
+    /* RGBA32 splits each texel across TMEM's two banks, so SETTILE's line covers half a row. */
+    unsigned line = t->line * 8 * (t->siz == 3 ? 2 : 1), bytes, pw, ph;
     uint32_t fmtkey, sample;
     gpvr_tex_t *gt;
     texconv_pvrfmt_t pf;
+    sTexMiss = "load/line";
     if (!ld->valid || t->line == 0) return NULL;
     if (t->masks && (1u << t->masks) < w) w = 1u << t->masks;
     if (t->maskt && (1u << t->maskt) < h) h = 1u << t->maskt;
     /* Tiles may declare more rows than were loaded (UVBT tile height, font atlases; gfx.md):
        only loaded rows exist in TMEM. */
     if (h > ld->bytes / line) h = ld->bytes / line;
+    sTexMiss = "size";
     if (w == 0 || h == 0 || w > 1024 || w * h > 16384) return NULL;
     bytes = line * h;
     if (bytes > sizeof raw) return NULL;
@@ -381,6 +395,7 @@ static gpvr_tex_t *texture_for_tile(int tidx) {
     shz_memcpy(raw, ram(ld->addr), (bytes + 7) & ~7u);
     if (ld->dxt == 0) texconv_deswizzle(raw, line, bytes / line);  /* pre-swizzled data (gfx.md) */
     pf = texconv_convert(raw, line, w, h, (n64_fmt_t)t->fmt, (n64_siz_t)t->siz, 1, conv, w, h);
+    sTexMiss = "format";
     if (pf == PVRFMT_UNSUPPORTED) return NULL;
     pw = texconv_pow2(w); ph = texconv_pow2(h);
     if (pw * ph > 32768) return NULL;
@@ -423,6 +438,13 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
     if (textured_possible && R.tex_on) {
         tile_t *t = &R.tile[R.tex_tile];
         cur_tex = texture_for_tile(R.tex_tile);
+#if DB_GFX_TRACE
+        if (!cur_tex && sTrace)
+            db_log("  texmiss %s tile %d fmt %d siz %d line %d tmem %d s %d-%d t %d-%d mask %d/%d load %d bytes %lu dxt %d cc %08lx:%08lx\n",
+                   sTexMiss, R.tex_tile, t->fmt, t->siz, t->line, t->tmem, t->uls >> 2, t->lrs >> 2, t->ult >> 2, t->lrt >> 2,
+                   t->masks, t->maskt, R.loads[(t->tmem >> 3) & 63].valid, (unsigned long)R.loads[(t->tmem >> 3) & 63].bytes,
+                   R.loads[(t->tmem >> 3) & 63].dxt, (unsigned long)R.cc0, (unsigned long)R.cc1);
+#endif
         if (cur_tex) {
             st->tex = cur_tex->ptr;
             st->tex_fmt = cur_tex->pvr_fmt;
@@ -514,7 +536,17 @@ static void do_tri(int ia, int ib, int ic) {
         if ((R.geom & F3D_G_CULL_FRONT) && cross <= 0.0f) return;
     }
     { uint64_t t = TNOW();
-    if (sStateEpoch != sEpoch) { draw_state(1, 0, &sState); sStateEpoch = sEpoch; }
+    if (sStateEpoch != sEpoch) {
+        draw_state(1, 0, &sState); sStateEpoch = sEpoch;
+#if DB_GFX_TRACE
+        if (sTrace)
+            db_log("  st geom %06lx cc %08lx:%08lx omh %08lx oml %08lx list %d tex %d %dx%d fit %d nl %d prim %02x%02x%02x env %02x%02x%02x\n",
+                   (unsigned long)R.geom, (unsigned long)R.cc0, (unsigned long)R.cc1, (unsigned long)R.omh,
+                   (unsigned long)R.oml, sState.list, sState.tex != NULL, sState.tex_w, sState.tex_h, sFit.linear,
+                   R.num_lights, (int)(R.prim[0] * 255), (int)(R.prim[1] * 255), (int)(R.prim[2] * 255),
+                   (int)(R.env[0] * 255), (int)(R.env[1] * 255), (int)(R.env[2] * 255));
+#endif
+    }
     gpvr_set_state(&sState);
     sT_state += TNOW() - t; }
     textured = sState.tex != NULL;
@@ -689,6 +721,7 @@ static void run_dl(const uint32_t *pc) {
             if (idx == F3D_G_MV_VIEWPORT) {
                 const int16_t *vp = (const int16_t *)m;
                 R.vp_sx = vp[0] * 0.25f; R.vp_sy = vp[1] * 0.25f; R.vp_tx = vp[4] * 0.25f; R.vp_ty = vp[5] * 0.25f;
+                TRACE("  viewport scale %d %d trans %d %d\n", vp[0], vp[1], vp[4], vp[5]);
             } else if (idx >= F3D_G_MV_L0 && idx <= F3D_G_MV_L7) {
                 int l = (idx - F3D_G_MV_L0) / 2;
                 R.light_col[l][0] = m[0]; R.light_col[l][1] = m[1]; R.light_col[l][2] = m[2];

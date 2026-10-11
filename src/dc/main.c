@@ -176,10 +176,16 @@ done:
                 db_log("state: %d (%s) at %u ms, gfx %u\n", st, st >= 0 && st < 16 ? kStateNames[st] : "?", ms,
                        wings64_gfx_tasks());
                 if (st == 0) seen_title = 1;
+#if DB_GFX_TRACE
+                { extern void wings64_dump_model_scales(void); if (st == 0 && ms > 0) wings64_dump_model_scales(); }
+#endif
                 if (st == 10 && seen_title) seen_file = 1;
                 if (st == 11 && seen_file) db_log("WINGS64_M2_OK\n");
                 last = st;
             }
+#if DB_GFX_TRACE
+            if (ms == 20000) { extern void wings64_dump_model_scales(void); wings64_dump_model_scales(); }
+#endif
             if (ms % 1000 == 0) {
                 db_log("game: t %u s gfx %u aud %u vi %u pi0 %u\n", ms / 1000, wings64_gfx_tasks(), wings64_aud_tasks(),
                        wings64_vi_retraces(), wings64_pi_zero_reads());
