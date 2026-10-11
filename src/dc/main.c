@@ -168,7 +168,7 @@ done:
         bootproc(NULL);
         /* The game's scheduler thread owns the PVR from here (gfx_f3d.c); main only reports.
            M2 gate: the state machine must pass title -> file menu -> vehicle & class select. */
-        int last = -2, seen_title = 0, seen_file = 0;
+        int last = -2, seen_title = 0, seen_file = 0, seen_flight = 0;
         for (unsigned ms = 0;; ms += 250) {
             int st = wings64_game_state();
             thd_sleep(250);
@@ -181,6 +181,8 @@ done:
 #endif
                 if (st == 10 && seen_title) seen_file = 1;
                 if (st == 11 && seen_file) db_log("WINGS64_M2_OK\n");
+                if (st == 5) seen_flight = 1;                                   /* test update = in flight */
+                if (st == 6 && seen_flight) db_log("WINGS64_M3_OK\n");         /* M3: flight -> results */
                 last = st;
             }
 #if DB_GFX_TRACE

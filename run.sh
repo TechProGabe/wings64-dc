@@ -52,10 +52,17 @@ cmd_play() { ## watch/play the emu image on the Mac (Flycast in the container, V
     scripts/emu_play.sh "$@"
 }
 cmd_gate() { ## the milestone gate: build the gate image (scripted input) and run it in the emulator
-    local script='8000:S:200,16000:A:200,30000:A:200'
+    local m script
+    m=$(sed -n 's/^#define WINGS64_MILESTONE \([0-9]*\).*/\1/p' src/dc/milestone.h)
+    case "$m" in
+        2) script='8000:S:200,16000:A:200,30000:A:200' ;;
+        # M3: title -> Start game -> file 1 -> class select (stick right: rocket belt) -> pilot -> overview ->
+        #     details -> start; no stick input: the test ends on its own and shows results.
+        *) script='8000:S:200,16000:A:200,30000:A:200,36000:>:300,40000:A:200,46000:A:200,52000:A:200,58000:A:200' ;;
+    esac
     EXTRA_CFLAGS="-DDB_AUTOPLAY=1 -DDB_AUTOPLAY_SCRIPT=\"\\\"$script\\\"\"" cmd_build
     $CTR run scripts/make_cdi.sh --emu
-    EMU_RECORD=${EMU_RECORD:-45} scripts/emu_smoke.sh build/wings64-emu.cdi "" 90
+    EMU_RECORD=${EMU_RECORD:-100} scripts/emu_smoke.sh build/wings64-emu.cdi "" 150
 }
 cmd_smoke() { ## Flycast smoke: boot the emu image, wait for the milestone marker on serial
     scripts/emu_smoke.sh "$@"

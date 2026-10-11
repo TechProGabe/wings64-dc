@@ -25,6 +25,7 @@ static uint64_t sT_vtx, sT_state, sT_conv, sT_emit, sT_other;
 #if DB_GFX_TRACE
 static int sTrace;
 static uint32_t sListTris[3], sRejTrivial, sRejCull, sClipped, sVtxLoads;
+static uint32_t sStEmit, sStRej[5], sStCull, sStClip;   /* per draw state: rejects by plane x+,x-,y+,y-,near */
 static float sMinW, sMaxW;
 #define TRACE(...) do { if (sTrace) db_log(__VA_ARGS__); } while (0)
 #else
@@ -431,6 +432,9 @@ static int draw_state(int textured_possible, int depth_override_always, gpvr_sta
     } else {
         st->list = GPVR_OP;
     }
+#ifdef DB_GFX_OPAQUE_ALL
+    st->list = GPVR_OP;   /* debug: draw everything opaque to see geometry hidden by alpha */
+#endif
     st->depth_cmp = (zb && (rm & 0x10)) ? PVR_DEPTHCMP_GEQUAL : PVR_DEPTHCMP_ALWAYS;
     st->depth_write = zb && (rm & 0x20);
     st->fog = (R.geom & F3D_G_FOG) && cycle < 2 ? 1 : 0;
@@ -502,7 +506,7 @@ static void lerp_vtx(vtx_t *o, const vtx_t *a, const vtx_t *b, float t) {
 static void lerp_vtx(vtx_t *o, const vtx_t *a, const vtx_t *b, float t);
 
 static void emit_poly(vtx_t *poly, int n, int textured, int decal) {
-    pvr_vertex_t pv[8];
+    pvr_vertex_t pv[12];
     for (int i = 0; i < n; i++) to_pvr(&poly[i], &pv[i], textured, decal);
     for (int i = 1; i + 1 < n; i++) gpvr_tri_pv(&pv[0], &pv[i], &pv[i + 1]);
 }
@@ -510,33 +514,60 @@ static void emit_poly(vtx_t *poly, int n, int textured, int decal) {
 static void do_tri(int ia, int ib, int ic) {
     vtx_t *v[3] = { &R.vc[ia], &R.vc[ib], &R.vc[ic] };
     int textured, decal;
-    /* Trivial reject: all three beyond the same side plane. */
-    if ((v[0]->x > v[0]->w && v[1]->x > v[1]->w && v[2]->x > v[2]->w) ||
-        (v[0]->x < -v[0]->w && v[1]->x < -v[1]->w && v[2]->x < -v[2]->w) ||
-        (v[0]->y > v[0]->w && v[1]->y > v[1]->w && v[2]->y > v[2]->w) ||
-        (v[0]->y < -v[0]->w && v[1]->y < -v[1]->w && v[2]->y < -v[2]->w) ||
-        (v[0]->z > v[0]->w && v[1]->z > v[1]->w && v[2]->z > v[2]->w) ||
-        (v[0]->z < -v[0]->w && v[1]->z < -v[1]->w && v[2]->z < -v[2]->w)) {
+    /* DIVERGES: with the colour image pointed at the z-buffer (cimg == zimg) the game writes depth only
+       (shadow volumes, gfx.md); those triangles never reach the N64 screen. Dropped here for now; a
+       PVR depth-only pass would be needed to reproduce the shadows themselves. */
+    if (R.cimg == R.zimg && R.cimg != 0) return;
+    /* Trivial reject: all three beyond the same side plane (x+, x-, y+, y-, near; no far plane). */
+    {
+        int plane = -1;
+        if (v[0]->x > v[0]->w && v[1]->x > v[1]->w && v[2]->x > v[2]->w) plane = 0;
+        else if (v[0]->x < -v[0]->w && v[1]->x < -v[1]->w && v[2]->x < -v[2]->w) plane = 1;
+        else if (v[0]->y > v[0]->w && v[1]->y > v[1]->w && v[2]->y > v[2]->w) plane = 2;
+        else if (v[0]->y < -v[0]->w && v[1]->y < -v[1]->w && v[2]->y < -v[2]->w) plane = 3;
+        else if (v[0]->z < -v[0]->w && v[1]->z < -v[1]->w && v[2]->z < -v[2]->w) plane = 4;
+        if (plane >= 0) {
 #if DB_GFX_TRACE
-        sRejTrivial++;
+            sRejTrivial++; sStRej[plane]++;
 #endif
-        return;
+            return;
+        }
     }
-    /* Fast3D culling: sign of the NDC area, flipped for each negative w. That equals the sign of the
-       homogeneous determinant |x y w| (no divisions); Fast3D's cross is its negative. */
-    if (R.geom & (F3D_G_CULL_FRONT | F3D_G_CULL_BACK)) {
+#ifdef DB_GFX_NO_CULL
+    const uint32_t cullmask = 0;   /* debug: no back-face culling */
+#else
+    const uint32_t cullmask = F3D_G_CULL_FRONT | F3D_G_CULL_BACK;
+#endif
+#ifndef GUARD
+#define GUARD 4.0f   /* guard band: x/y clipped at +-GUARD*w so screen coordinates stay within the PVR's range */
+#endif
+    int needs_clip = 0;
+    for (int i = 0; i < 3; i++) {
+        float gw = GUARD * v[i]->w;
+        if (v[i]->z + v[i]->w < 0.0f || v[i]->x > gw || v[i]->x < -gw || v[i]->y > gw || v[i]->y < -gw) needs_clip = 1;
+    }
+    /* Triangles crossing the near plane are culled after clipping (below): their orientation before
+       clipping is not reliable once a vertex is behind the eye. */
+    if ((R.geom & cullmask) && !needs_clip) {
         float det = v[0]->x * (v[1]->y * v[2]->w - v[2]->y * v[1]->w)
                   - v[0]->y * (v[1]->x * v[2]->w - v[2]->x * v[1]->w)
                   + v[0]->w * (v[1]->x * v[2]->y - v[2]->x * v[1]->y);
         float cross = -det;
 #if DB_GFX_TRACE
-        if (((R.geom & F3D_G_CULL_BACK) && cross >= 0.0f) || ((R.geom & F3D_G_CULL_FRONT) && cross <= 0.0f)) sRejCull++;
+        if (((R.geom & F3D_G_CULL_BACK) && cross >= 0.0f) || ((R.geom & F3D_G_CULL_FRONT) && cross <= 0.0f)) { sRejCull++; sStCull++; }
 #endif
         if ((R.geom & F3D_G_CULL_BACK) && cross >= 0.0f) return;
         if ((R.geom & F3D_G_CULL_FRONT) && cross <= 0.0f) return;
     }
     { uint64_t t = TNOW();
     if (sStateEpoch != sEpoch) {
+#if DB_GFX_TRACE
+        if (sTrace && (sStEmit | sStRej[0] | sStRej[1] | sStRej[2] | sStRej[3] | sStRej[4] | sStCull | sStClip))
+            db_log("    -> emit %lu rej x+%lu x-%lu y+%lu y-%lu near%lu cull %lu clip %lu\n", (unsigned long)sStEmit,
+                   (unsigned long)sStRej[0], (unsigned long)sStRej[1], (unsigned long)sStRej[2], (unsigned long)sStRej[3],
+                   (unsigned long)sStRej[4], (unsigned long)sStCull, (unsigned long)sStClip);
+        sStEmit = sStRej[0] = sStRej[1] = sStRej[2] = sStRej[3] = sStRej[4] = sStCull = sStClip = 0;
+#endif
         draw_state(1, 0, &sState); sStateEpoch = sEpoch;
 #if DB_GFX_TRACE
         if (sTrace)
@@ -551,7 +582,7 @@ static void do_tri(int ia, int ib, int ic) {
     sT_state += TNOW() - t; }
     textured = sState.tex != NULL;
     decal = ((R.oml >> 10) & 3) == 3;
-    if (v[0]->z + v[0]->w >= 0.0f && v[1]->z + v[1]->w >= 0.0f && v[2]->z + v[2]->w >= 0.0f) {
+    if (!needs_clip) {
         /* Common case: no near clip; each cache vertex converts once per draw state. */
         uint64_t t = TNOW();
         for (int i = 0; i < 3; i++)
@@ -560,26 +591,49 @@ static void do_tri(int ia, int ib, int ic) {
         gpvr_tri_pv(&v[0]->pv, &v[1]->pv, &v[2]->pv);
         sT_emit += TNOW() - t;
 #if DB_GFX_TRACE
-        sListTris[sState.list]++;
+        sListTris[sState.list]++; sStEmit++;
 #endif
         return;
     }
     {
-        /* Near clip against z + w >= 0 (Sutherland-Hodgman, one plane). */
-        vtx_t in[3], out[8];
+        /* Sutherland-Hodgman in clip space against near (z + w >= 0) and the x/y guard-band planes. */
+        vtx_t bufA[12], bufB[12], *in = bufA, *out = bufB, *tmp;
+        int n = 3;
 #if DB_GFX_TRACE
-        sClipped++;
+        sClipped++; sStClip++;
 #endif
-        int n = 0;
         for (int i = 0; i < 3; i++) in[i] = *v[i];
-        for (int i = 0; i < 3; i++) {
-            vtx_t *a = &in[i], *b = &in[(i + 1) % 3];
-            float da = a->z + a->w, db = b->z + b->w;
-            if (da >= 0.0f) out[n++] = *a;
-            if ((da >= 0.0f) != (db >= 0.0f)) lerp_vtx(&out[n++], a, b, da / (da - db));
+        for (int plane = 0; plane < 5 && n >= 3; plane++) {
+            int m = 0;
+            for (int i = 0; i < n; i++) {
+                vtx_t *a = &in[i], *b = &in[(i + 1) % n];
+                float da, db;
+                switch (plane) {
+                case 0: da = a->z + a->w; db = b->z + b->w; break;                       /* near */
+                case 1: da = GUARD * a->w - a->x; db = GUARD * b->w - b->x; break;       /* x <= G w */
+                case 2: da = GUARD * a->w + a->x; db = GUARD * b->w + b->x; break;       /* x >= -G w */
+                case 3: da = GUARD * a->w - a->y; db = GUARD * b->w - b->y; break;       /* y <= G w */
+                default: da = GUARD * a->w + a->y; db = GUARD * b->w + b->y; break;      /* y >= -G w */
+                }
+                if (da >= 0.0f) out[m++] = *a;
+                if ((da >= 0.0f) != (db >= 0.0f) && m < 12) lerp_vtx(&out[m++], a, b, da / (da - db));
+            }
+            n = m; tmp = in; in = out; out = tmp;
         }
+        out = in;
         if (n < 3) return;
         for (int i = 0; i < n; i++) if (out[i].w < 1e-5f) out[i].w = 1e-5f;
+        if (R.geom & cullmask) {
+            /* Clipped polygon: all w > 0 now, so the NDC area sign is the true orientation. */
+            float area = 0.0f;
+            for (int i = 0; i < n; i++) {
+                int j = (i + 1) % n;
+                area += (out[i].x / out[i].w) * (out[j].y / out[j].w) - (out[j].x / out[j].w) * (out[i].y / out[i].w);
+            }
+            /* Same convention as the unclipped path: cross = -det, i.e. -2*area here. */
+            if ((R.geom & F3D_G_CULL_BACK) && -area >= 0.0f) return;
+            if ((R.geom & F3D_G_CULL_FRONT) && -area <= 0.0f) return;
+        }
         emit_poly(out, n, textured, decal);
     }
 }
@@ -813,12 +867,24 @@ void gfx_f3d_run(const void *dl) {
         for (int i = 0; i < 16; i++) R.mv[0].elem[i] = R.proj.elem[i] = (i % 5) == 0 ? 1.0f : 0.0f;
     }
     uint64_t t0 = timer_us_gettime64(), t1, t2, t3;
+#ifdef DB_GFX_BG_MAGENTA
+    gpvr_frame_begin(0xFFFF00FFu);   /* debug: uncovered pixels show magenta */
+#else
     gpvr_frame_begin(0xFF000000u);
+#endif
     t1 = timer_us_gettime64();
     DIRTY();
     R.mv_top = 0;
 #if DB_GFX_TRACE
-    sTrace = (sFrames % 15) == 0;
+    {
+        /* Trace only in flight (game state 5) to keep menus at speed; DB_GFX_TRACE_ALL traces everything. */
+        extern int wings64_game_state(void);
+#ifdef DB_GFX_TRACE_ALL
+        sTrace = (sFrames % 15) == 0;
+#else
+        sTrace = (sFrames % 30) == 0 && wings64_game_state() == 5;
+#endif
+    }
     sListTris[0] = sListTris[1] = sListTris[2] = 0;
     sRejTrivial = sRejCull = sClipped = sVtxLoads = 0;
     sMinW = 1e30f; sMaxW = -1e30f;
