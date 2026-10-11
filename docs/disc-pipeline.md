@@ -7,7 +7,9 @@ baserom.z64 (gitignored, SHA-1 checked)
 build/wings64.elf  (kos-cc)
 disc/disc.id       (build stamp; runtime probes it to choose /cd)
 disc/wings64.vmi/.vms icon (optional), disc/README.txt
-  └─ mkdcdisc -e build/wings64.elf -d disc/ -n "Pilotwings 64" -a "wings64-dc" -r <YYYYMMDD> -v 1 -o build/wings64.cdi
+disc/fsmeta.txt  (slice manifest: size, crc32, file counts; checked at boot)
+  └─ mkdcdisc -e build/wings64.elf -D disc -n "Pilotwings 64" -a "wings64-dc" -V WINGS64 -r <YYYYMMDD> -o build/wings64.cdi
+     (-D stages the CONTENTS of disc/ at the disc root → /cd/wings64.fs; -d would add a disc/ directory)
      variants:  --emu  → adds -N (no padding; emulator/ODE)
                 --data-data → -L data-data (late VA2 consoles)
      fallback:  scripts/make_cdi.sh --legacy → objcopy -R .stack -O binary → scramble → makeip → mkisofs -C 0,11702 -G IP.BIN → cdi4dc

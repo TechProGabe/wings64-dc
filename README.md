@@ -5,8 +5,16 @@ Native Sega Dreamcast port of **Pilotwings 64** (Nintendo 64, 1996), built from 
 decompilation on [KallistiOS](https://github.com/KallistiOS/KallistiOS), with
 [sh4zam](https://github.com/TechProGabe/sh4zam) as the SH-4 math layer.
 
-**Status: planning.** `PLAN.md` holds the architecture and milestones; `CLAUDE.md`
-holds the rules; `kb/RESUME.md` is where an executing agent starts.
+**Status: M0 (toolchain + boot check disc).** `PLAN.md` holds the architecture and milestones;
+`CLAUDE.md` holds the rules; `kb/RESUME.md` is where an executing agent starts.
+
+## Build
+Requires Docker (colima on macOS) and your own US ROM copied to `baserom.z64` at the repo root.
+```
+./run.sh setup     # container (GCC 14.3.0 + KOS v2.2.2 + mkdcdisc, ~25 min first time), submodules, decomp
+./run.sh disc      # build/wings64.cdi, padded for an 80-min CD-R
+./run.sh test      # tree checks + ROM slice validation
+```
 
 No game content is included or will ever be committed. Building requires your own
 legally obtained US ROM (`docs/rom-provenance.md`).

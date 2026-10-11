@@ -9,7 +9,9 @@
 > hardware results, not emulator ones, as evidence.
 
 ## Where the port is
-Planning done 2026-10-10. No code. Next action: **M0** in `PLAN.md` §2.
+M0 built 2026-10-10: container, `run.sh`, ROM slicer, KOS boot check screen, `build/wings64.cdi`.
+**Blocked on the maintainer's CD-R boot** (exit criteria in `kb/STATE.md`). Do not start M1 until the
+M0 screen is reported PASS. Flycast is broken on the host (see `kb/traps.md`), so there is no emulator smoke.
 
 ## Reference clones used for planning (re-clone when needed; shallow is fine)
 | what | where | pin |
@@ -28,7 +30,7 @@ Planning done 2026-10-10. No code. Next action: **M0** in `PLAN.md` §2.
 The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
 (branch `docs-site`, `doc/site/dist/llms*.txt` and `dist/api/index.json` present).
 
-## Build lines (to be created in M0; names are the contract)
+## Build lines (exist since M0; names are the contract)
 ```
 ./run.sh setup            # container image at docker/pins.env, submodules, hooks
 ./run.sh build            # build/wings64.elf
@@ -37,8 +39,10 @@ The user's local sh4zam checkout with built docs: `~/sh4zam-upstream/sh4zam`
 ./run.sh release          # build/wings64-release.cdi (no db.o, NDEBUG)
 ./run.sh test [--ci]      # host tests + tree checks (--ci: no ROM needed)
 ./run.sh run-hw           # no cable: prints the .cdi path to burn + checklist
+./run.sh smoke            # Flycast serial smoke (waits for WINGS64_M<n>_OK); host Flycast currently broken
+./run.sh shell            # shell inside the pinned container
 ./run.sh decomp-refresh   # re-fetch decomp at pin and re-apply patches/
-flycast -config config:Debug.SerialConsoleEnabled=yes build/wings64-emu.cdi
+./run.sh emu              # Flycast GUI on build/wings64-emu.cdi with serial console
 ```
 
 ## Measurement rules

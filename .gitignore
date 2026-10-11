@@ -18,3 +18,5 @@ __pycache__/
 *.map
 .DS_Store
 dc_env.local.sh
+external/pw64-decomp/
+disc/

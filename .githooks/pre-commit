@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Pre-commit: no-ROM tree checks (ROM leak, DIVERGES format, patch docs, sh4zam names).
+exec "$(git rev-parse --show-toplevel)/run.sh" test --ci

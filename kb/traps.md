@@ -57,3 +57,18 @@
 - GCC 15.2 was tried and abandoned by ssb64-dc (reason unrecorded); 14.3 proven by sf64-dc.
 - sm64-dc/sf64-dc use OLD sh4zam names (`shz_xmtrx_trans_vec4`, `shz_fast_invf`,
   `shz_matrix_4x4_t`) that no longer exist — translate, never copy.
+
+## Paid for in M0 (2026-10-10)
+- KOS v2.2.2 ships `utils/dc-chain` (not `kos-chain`); profiles 13.4.0/14.3.0/15.1.0; no 13.2.0.
+- colima has no buildx: legacy `docker build` (no `--progress`, stages run sequentially). A stale local
+  `debian:bookworm` gave "content digest … not found" → `docker pull debian:bookworm`.
+- macOS `/bin/bash` is 3.2: `"${arr[@]}"` on an empty array under `set -u` aborts → use `${arr[@]+"${arr[@]}"}`.
+- KOS v2.2.2 has no `PVR_PT_ALPHA_REF` name; register offset is 0x11C (`src/dc/dcpvr.h`).
+- KOS_CFLAGS carries `-fno-builtin`; the sh4zam library objects re-enable `-fbuiltin` after it.
+- mkdcdisc `-d disc` adds a `disc/` directory on the CD; `-D disc` stages its contents at `/cd/`.
+- ISO primary names are 8.3 (`wings64.meta` → `WINGS64.MET`); Joliet/RR carry the long name, but keep
+  disc files 8.3-safe so `/cd` lookups never depend on extension handling.
+- Padded CD-R CDI is ~705 MB of raw 2352-byte sectors (fills toward an 80-min disc): use 80-min CD-R.
+- The `shz_`/`SHZ_` prefixes are reserved for sh4zam: the name lint flags port identifiers using them.
+- Flycast 2.6 on this Mac (Darwin 27) aborts in `sh4/dyna/driver.cpp:347` "Verify Failed &mem_b[0] == …"
+  for every image, dynarec on or off. No emulator smoke until Flycast is updated; hardware only.
