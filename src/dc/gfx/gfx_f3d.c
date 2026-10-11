@@ -439,6 +439,19 @@ static uint32_t sample_hash(const uint8_t *p, uint32_t bytes) {
     return h ^ bytes;
 }
 
+/* docs/fps-plan.md change 3: draw_state runs ~136 times a frame and each textured call hashed up to 4 KB of
+   texture RAM (16 strided loads) and walked the cache. Within one display list the app thread cannot run
+   (lower priority), so a (load address, format/size key) seen this frame maps to the same texture.
+   Kill switch: -DWINGS64_TEX_MEMO=0. */
+#ifndef WINGS64_TEX_MEMO
+#define WINGS64_TEX_MEMO 1
+#endif
+#if WINGS64_TEX_MEMO
+#define TEX_MEMO_SLOTS 64
+static struct { uint32_t frame, addr, fmtkey; gpvr_tex_t *gt; uint16_t w, h; } sTexMemo[TEX_MEMO_SLOTS];
+static uint32_t sTexFrame = 1;
+#endif
+
 static gpvr_tex_t *texture_for_tile(int tidx) {
     /* TMEM is 4 KB: at most 8192 texels (4-bit) per load; PVR textures go up to 1024 wide. */
     static uint8_t raw[8192] __attribute__((aligned(32)));
@@ -465,9 +478,28 @@ static gpvr_tex_t *texture_for_tile(int tidx) {
     if (bytes > sizeof raw) return NULL;
     sTexEffW = w; sTexEffH = h;
     fmtkey = t->fmt | t->siz << 3 | (w - 1) << 5 | (h - 1) << 15 | (uint32_t)(line & 0xFF) << 24;
+#if WINGS64_TEX_MEMO
+    {
+        static uint32_t seen_resets;   /* a cache reset (VRAM pressure) frees every entry: drop the memo */
+        if (seen_resets != gpvr_stats.resets) { seen_resets = gpvr_stats.resets; sTexFrame++; }
+    }
+    unsigned mslot = ((ld->addr >> 3) ^ (fmtkey * 0x9E3779B1u >> 26)) & (TEX_MEMO_SLOTS - 1);
+    if (sTexMemo[mslot].frame == sTexFrame && sTexMemo[mslot].addr == ld->addr && sTexMemo[mslot].fmtkey == fmtkey) {
+        gpvr_stats.tex_hits++;
+        return sTexMemo[mslot].gt;
+    }
+#endif
     sample = sample_hash(ram(ld->addr), bytes);
     gt = gpvr_tex_lookup(ld->addr, fmtkey, sample);
+#if WINGS64_TEX_MEMO
+    if (gt) {
+        sTexMemo[mslot].frame = sTexFrame; sTexMemo[mslot].addr = ld->addr; sTexMemo[mslot].fmtkey = fmtkey;
+        sTexMemo[mslot].gt = gt;
+        return gt;
+    }
+#else
     if (gt) return gt;
+#endif
     shz_memcpy(raw, ram(ld->addr), (bytes + 7) & ~7u);
     if (ld->dxt == 0) texconv_deswizzle(raw, line, bytes / line);  /* pre-swizzled data (gfx.md) */
     pf = texconv_convert(raw, line, w, h, (n64_fmt_t)t->fmt, (n64_siz_t)t->siz, 1, conv, w, h);
@@ -491,8 +523,15 @@ static gpvr_tex_t *texture_for_tile(int tidx) {
     for (unsigned y = 0; y < ph; y++)
         for (unsigned x = 0; x < pw; x++)
             pow2buf[y * pw + x] = conv[(y * h / ph) * w + (x * w / pw)];
-    return gpvr_tex_insert(ld->addr, fmtkey, sample, pow2buf, pw, ph,
-                           pf == PVRFMT_ARGB1555 ? PVR_TXRFMT_ARGB1555 : PVR_TXRFMT_ARGB4444);
+    gt = gpvr_tex_insert(ld->addr, fmtkey, sample, pow2buf, pw, ph,
+                         pf == PVRFMT_ARGB1555 ? PVR_TXRFMT_ARGB1555 : PVR_TXRFMT_ARGB4444);
+#if WINGS64_TEX_MEMO
+    if (gt) {
+        sTexMemo[mslot].frame = sTexFrame; sTexMemo[mslot].addr = ld->addr; sTexMemo[mslot].fmtkey = fmtkey;
+        sTexMemo[mslot].gt = gt;
+    }
+#endif
+    return gt;
 }
 
 static float shift_scale(int sh) {
@@ -1013,6 +1052,9 @@ void gfx_f3d_run(const void *dl) {
     DIRTY();
     R.mv_top = 0;
     R.mvp_dirty = 1;
+#if WINGS64_TEX_MEMO
+    sTexFrame++;            /* per-frame memo: textures may change between display lists */
+#endif
 #if DB_GFX_TRACE
     {
         /* Trace only in flight (game state 5) to keep menus at speed; DB_GFX_TRACE_ALL traces everything. */
