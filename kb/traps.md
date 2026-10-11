@@ -171,3 +171,13 @@
   adapter). KOS 1c6398f's sd.c + scif-spi.c (backported in src/dc/kos_sd) work first time on the same card.
   Use 8.3 upper-case names on the card. The console is muted during bring-up: show SD state on screen.
 - **Flycast frame rates are not hardware frame rates**: ~30 fps in the air in Flycast, 15-20 on the console.
+- **KOS v2.2.2 is not strictly priority-preemptive at timer ticks.** `thd_schedule(front_of_line=0)` searches
+  the run queue before re-queuing the running thread, so a tick hands the CPU to the first *other* ready
+  thread even if it has lower priority. Any always-ready thread (a spin loop) steals time from everything:
+  the decomp's kernel idle spin took ~44% of each display-list window (patches/023). Never leave a thread
+  spinning; block it. Priorities only order threads that are waiting to run.
+- **Measure wall vs CPU**: `thd_get_cpu_time(thd_get_current())` around a phase shows time stolen by other
+  threads; PC sampling on the scheduler tick over-samples idle (extra wakeup interrupts while threads sleep).
+- **FPSCR.DN flushes denormals in compares too**: `x > 0.0f` is false for a denormal x. Test the bits.
+- Inlined static functions take their caller's section: `section(".text.hot.*")` on a callee that gets
+  inlined is ignored; put the attribute on the caller that keeps the code.

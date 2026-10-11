@@ -23,6 +23,12 @@ static void *thread_tramp(void *p) {
     return NULL;
 }
 
+/* CPU time a KOS thread has run (ns), for the per-thread budget log; 0 for NULL. */
+unsigned long long kb_thread_cpu_ns(void *kthd) {
+    return kthd ? thd_get_cpu_time((kthread_t *)kthd) : 0;
+}
+unsigned long long kb_total_cpu_ns(void) { return thd_get_total_cpu_time(); }
+
 void *kb_thread_spawn(void (*entry)(void *), void *arg, int kos_prio, unsigned stack_size, const char *label) {
     kthread_attr_t attr = { 0 };
     tramp_t *t;

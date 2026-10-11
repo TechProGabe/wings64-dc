@@ -38,7 +38,25 @@ static timer_primary_callback_t sNext;
 static uint64_t sWindowStart;
 static unsigned sDumps;
 
+/* Samples taken while the scheduler thread is inside gfx_f3d_run but another context runs: what steals
+   the display-list window (gfx_f3d.c sets wings64_gfx_dl_thread for the duration). */
+extern void *volatile wings64_gfx_dl_thread;   /* gfx_f3d.c */
+#define OTHER_SLOTS 64
+static uint32_t sOtherPc[OTHER_SLOTS], sOtherN[OTHER_SLOTS], sOtherTotal, sInDlTotal;
+static void *sOtherThd[OTHER_SLOTS];
+
 static void prof_tick(irq_context_t *cxt) {
+    void *dl = wings64_gfx_dl_thread;
+    if (dl && !sPaused) {
+        sInDlTotal++;
+        if (thd_current != dl) {
+            /* where the display-list thread itself is parked: its saved return address */
+            uint32_t pc = ((kthread_t *)dl)->context.pr & ~15u, h = (pc >> 4) % OTHER_SLOTS;
+            for (int k = 0; k < OTHER_SLOTS; k++, h = (h + 1) % OTHER_SLOTS)
+                if (sOtherN[h] == 0 || sOtherPc[h] == pc) { sOtherPc[h] = pc; sOtherThd[h] = thd_current; sOtherN[h]++; break; }
+            sOtherTotal++;
+        }
+    }
     if (!sPaused) {
         uint32_t pc = CONTEXT_PC(*cxt);
         if (pc >= sLo && pc < sHi) sBins[(pc - sLo) >> BIN_SHIFT]++;
@@ -71,8 +89,21 @@ static int chord_down(void) {
     return st && st->ltrig > 200 && st->rtrig > 200 && (st->buttons & CONT_START);
 }
 
+static void dump_other(const char *why) {
+    if (!sInDlTotal) return;
+    db_log("prof: in-dl %s: %lu samples, %lu on other threads\n", why, (unsigned long)sInDlTotal,
+           (unsigned long)sOtherTotal);
+    for (int k = 0; k < OTHER_SLOTS; k++)
+        if (sOtherN[k] * 50 >= sOtherTotal && sOtherN[k])
+            db_log("prof: parked-pr %08lx %lu (running %s)\n", (unsigned long)sOtherPc[k], (unsigned long)sOtherN[k],
+                   sOtherThd[k] ? ((kthread_t *)sOtherThd[k])->label : "?");
+    memset(sOtherN, 0, sizeof sOtherN);
+    sOtherTotal = sInDlTotal = 0;
+}
+
 static void dump(const char *why) {
     uint32_t hdr[8];
+    dump_other(why);
     char name[16];
     int rc;
     sPaused = 1;

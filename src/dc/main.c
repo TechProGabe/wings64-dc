@@ -104,6 +104,30 @@ static void audio_tick(unsigned ms, int st, int seen_flight) {
     }
 }
 
+/* Per-thread CPU split over the last window (KOS accounts time at each context switch, so this is not
+   biased like PC sampling): N64 thread ids 0 render, 1 kernel (idle spin), 3 audio, 4 scheduler (runs the
+   display-list interpreter), 6 app (game logic), plus the main monitor thread. */
+static void thread_cpu_log(void) {
+    extern int wings64_thread_info(int i, int *id, void **kthd);
+    extern unsigned long long kb_thread_cpu_ns(void *kthd), kb_total_cpu_ns(void);
+    static unsigned long long last[16], last_total, last_main;
+    unsigned long long total = kb_total_cpu_ns(), win = total - last_total, c;
+    char line[200];
+    int n = 0, id, i;
+    void *k;
+    if (!win) return;
+    for (i = 0; i < 15 && wings64_thread_info(i, &id, &k); i++) {
+        c = kb_thread_cpu_ns(k);
+        n += snprintf(line + n, sizeof line - (size_t)n, " t%d %llu%%", id, (c - last[i]) * 100 / win);
+        last[i] = c;
+    }
+    c = kb_thread_cpu_ns(thd_get_current());
+    n += snprintf(line + n, sizeof line - (size_t)n, " main %llu%%", (c - last_main) * 100 / win);
+    last_main = c;
+    last_total = total;
+    db_log("cpu:%s over %llu ms\n", line, win / 1000000);
+}
+
 /* M4 exit, judged when the M3 flight reaches results: music and SFX started in the menus and in flight,
    AICA channels seen keyed on in both, every wave found, the audio thread never stalled. */
 static int audio_gate(void) {
@@ -281,6 +305,7 @@ done:
 #endif
             prof_poll(ms, st);
             if (ms % 1000 == 0) audio_tick(ms, st, seen_flight);
+            if (ms % 5000 == 0) thread_cpu_log();
 #if DB_SOAK && WINGS64_AUDIO
             /* wall-clock time: the 250 ms loop counter runs slow against it */
             static uint64_t soak_t0;

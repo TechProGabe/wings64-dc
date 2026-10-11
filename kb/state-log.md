@@ -1,5 +1,23 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — frame-rate pass (emulator): ~55-57 fps everywhere, root cause in the scheduler
+- Fable consult -> docs/fps-plan.md; executed changes 1-6 plus decomp -O2 and fsqrt (table in kb/STATE.md),
+  each with a kill switch and a gate pass. Flycast DL went title 28.7 -> 19.5 ms, menus 28.3 -> 21.3,
+  flight 20.6 -> 16.5 before the root cause below.
+- New instruments: per-thread CPU split (`cpu:` lines, KOS thd_get_cpu_time), DL wall vs CPU per frame
+  (`dl avg30 wall .. cpu ..`), an in-DL sampler (what runs while the interpreter is inside a display list),
+  per-game-state profile windows with a serial fallback, `scripts/gfxstat.sh`.
+- **Root cause**: DL wall 21.4 ms but interpreter CPU 12.1 ms; ~44% of every DL window ran the decomp's
+  kernel thread `while (1) { }` idle spin. KOS v2.2.2 `thd_schedule` picks the next thread before
+  re-queuing the running one on a timer tick, so any ready thread gets the CPU whatever its priority.
+  patches/023 parks that thread on a message queue. Result: title 57, menus 54-56, flight 56, results 58 fps
+  (was 22-33); DL wall == CPU (11.4 ms title, 9.9 flight); idle spin 62% -> 0%; the gate reaches flight at
+  50 s instead of 108 s (menu loads were starved too). Game time unchanged (flight 19.75 s at 57 fps).
+- fsqrt: the game's sqrtf was newlib's software loop; SH-4 fsqrt is bit-identical except denormals (FPSCR.DN
+  flushes them, even in compares) which go to newlib: 199,122 values, 0 mismatches.
+- The Rocket Belt column bug reproduces in Flycast (camera looking up during the climb).
+- Hardware confirmation pending (no burn scheduled).
+
 ## 2026-10-11 — second hardware log (disc 0a43221-1011-2141, profiler build)
 - LOG001.TXT (158 s, 0 dropped): no PROF dump (chord not registered or not pressed; auto dump is at 240 s).
   Per state, fps / DL median: title 20 / 32 ms, file menu 13 / 45, class select 14 / 43, pilot select

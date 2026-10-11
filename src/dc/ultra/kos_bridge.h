@@ -11,6 +11,8 @@ void *kb_thread_self(void);
 void kb_thread_set_prio(void *kthd, int kos_prio);
 void kb_yield(void);
 void kb_set_hz(unsigned hz);
+unsigned long long kb_thread_cpu_ns(void *kthd);   /* CPU time the thread has run */
+unsigned long long kb_total_cpu_ns(void);
 
 /* Global lock = interrupts off (single core). kb_wait must be called with interrupts off; it blocks,
    then returns with them still off. timeout_ms 0 = forever. */

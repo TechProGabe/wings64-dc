@@ -11,6 +11,7 @@
 | emulator gate (`./run.sh smoke`) | containerized Flycast v2.7 (`docker/emu/`, Xvfb, HLE BIOS, composite) boots the `--emu` cdi; serial log must show `WINGS64_M<n>_OK`; `build/emu-shot-{1,2}.png` captured at the marker and +5 s | every milestone exit (maintainer decision 2026-10-10) |
 | hardware | burned CD-R on the retail console: boot, milestone exit criteria, `DB_PERF` numbers via on-screen overlay and `/sd/WINGS64/LOG*.TXT` (SD adapter; no dcload); soak (`DB_SOAK`) 30 min for audio dropouts | per milestone |
 | hardware profile (`DB_PROF`, on in `./run.sh hwdisc`) | PC sampling at the 1 kHz scheduler tick into 16-byte bins over .text (src/dc/prof.c); hold **L + R + Start** (or wait 240 s) and `WINGS64/PROFnnn.BIN` lands on the SD card; `tools/prof/decode_prof.py PROFnnn.BIN <elf>` prints the flat profile (use the ELF saved beside the image) | hardware perf work |
+| frame budget (any build) | `gfx: ... dl avg30 wall W cpu C` (C < W means another thread stole the window), `cpu: tN P%` every 5 s per N64 thread (0 render, 1 kernel, 3 audio, 4 scheduler/interpreter, 6 app) from KOS thd_get_cpu_time; `scripts/gfxstat.sh [log]` prints fps and DL median/max per game state; DB_PROF also logs `prof: in-dl` (what runs while a display list is in progress) | perf work, emulator or hardware |
 | hardware evidence format | `kb/state-log.md` entry: date, disc build id, console, video (composite/S-video), SD log file name, what was observed, numbers | always |
 
 ## SD card log (hardware)

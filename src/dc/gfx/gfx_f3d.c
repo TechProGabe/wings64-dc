@@ -1087,6 +1087,9 @@ static int sInit;
 static uint32_t sFrames;
 
 
+/* The thread inside gfx_f3d_run while a display list is interpreted (else NULL): prof.c's in-DL sampler. */
+void *volatile wings64_gfx_dl_thread;
+
 HOT void gfx_f3d_run(const void *dl) {
     if (!sInit) {
         sInit = 1;
@@ -1094,12 +1097,16 @@ HOT void gfx_f3d_run(const void *dl) {
         for (int i = 0; i < 16; i++) R.mv[0].elem[i] = R.proj.elem[i] = (i % 5) == 0 ? 1.0f : 0.0f;
     }
     uint64_t t0 = timer_us_gettime64(), t1, t2, t3;
+    static uint64_t sDlCpuSum, sDlWallSum;
+    uint64_t c1;
 #ifdef DB_GFX_BG_MAGENTA
     gpvr_frame_begin(0xFFFF00FFu);   /* debug: uncovered pixels show magenta */
 #else
     gpvr_frame_begin(0xFF000000u);
 #endif
     t1 = timer_us_gettime64();
+    c1 = thd_get_cpu_time(thd_get_current());
+    wings64_gfx_dl_thread = thd_get_current();
     DIRTY();
     R.mv_top = 0;
     R.mvp_dirty = 1;
@@ -1128,11 +1135,16 @@ HOT void gfx_f3d_run(const void *dl) {
           (unsigned long)sClipped, (unsigned long)sVtxLoads, sMinW, sMaxW);
 #endif
     t2 = timer_us_gettime64();
+    wings64_gfx_dl_thread = NULL;
+    sDlCpuSum += (thd_get_cpu_time(thd_get_current()) - c1) / 1000;   /* ns -> us */
+    sDlWallSum += t2 - t1;
     gpvr_frame_end();
     t3 = timer_us_gettime64();
     if (++sFrames % 30 == 0) {
-        db_log("gfx: wait %lu us, dl %lu us, finish %lu us, resets %lu\n", (unsigned long)(t1 - t0),
-               (unsigned long)(t2 - t1), (unsigned long)(t3 - t2), (unsigned long)gpvr_stats.resets);
+        db_log("gfx: wait %lu us, dl %lu us, finish %lu us, resets %lu, dl avg30 wall %lu cpu %lu us\n",
+               (unsigned long)(t1 - t0), (unsigned long)(t2 - t1), (unsigned long)(t3 - t2),
+               (unsigned long)gpvr_stats.resets, (unsigned long)(sDlWallSum / 30), (unsigned long)(sDlCpuSum / 30));
+        sDlWallSum = sDlCpuSum = 0;
         if (DB_GFX_PROF) db_log("gfx: 30f us: vtx %lu state %lu conv %lu emit %lu | fit %lu tex %lu set %lu\n", (unsigned long)sT_vtx, (unsigned long)sT_state,
                (unsigned long)sT_conv, (unsigned long)sT_emit, (unsigned long)sT_fit, (unsigned long)sT_tex, (unsigned long)sT_set);
         sT_fit = sT_tex = sT_set = 0;

@@ -8,29 +8,32 @@
 > for all math. Never commit ROM material. Mark departures `DIVERGES`. Report
 > hardware results, not emulator ones, as evidence.
 
-## Next-run seed prompt (after the M4 hardware test, written 2026-10-11)
+## Next-run seed prompt (after the frame-rate pass, written 2026-10-11)
 > You are executing wings64-dc (~/Documents/GitHub/wings64-dc), a native Dreamcast port of Pilotwings 64
-> from its decomp. Read `CLAUDE.md`, `kb/RESUME.md`, `kb/STATE.md`, `kb/traps.md`, `docs/audio-design.md`
-> (amendments at the end). M0-M4 pass in the emulator gate. First take in the maintainer's hardware notes
-> for the M4 disc (kb/state-log.md; SD log `aud: t` lines): fix what hardware showed (audio by ear: loop
-> clicks, high SFX, tempo; boot time) before new work, then continue with the ranked queue (frame rate
-> floor, menu load stalls, M5 parity). Same binding rules as before (CLAUDE.md §1).
+> from its decomp. Read `CLAUDE.md`, `kb/RESUME.md`, `kb/STATE.md` (current numbers + queue), `kb/traps.md`
+> (the KOS scheduler and SD entries at the end), `docs/fps-plan.md` (results at the end). M0-M4 pass in the
+> emulator gate; two hardware runs exist (audio good, SD log works, 15-25 fps before the fps pass). The fps
+> pass (patches/023 + kill-switched changes) took Flycast to ~55-57 fps. If the maintainer brings hardware
+> logs from a `./run.sh hwdisc` disc, read them first (`scripts/gfxstat.sh LOGNNN.TXT`, `cpu:` lines,
+> `tools/prof/decode_prof.py PROFnnn.BIN <elf from the NAS>`). Otherwise work the queue: the visual bugs
+> (the Rocket Belt column reproduces in Flycast), then menu loads, then M5. Binding rules: CLAUDE.md §1.
+> The maintainer limits subagents (Fable consults; Haiku agents up to 5 when they clearly help).
 
 ## Where the port is
-**M4 done 2026-10-11 (emulator gate + 10-min soak PASS).** Music and SFX play in menus and flight: the
-decomp's own sequence/sound players drive `src/dc/audio` (alSyn voices -> AICA channels 0-31 via the stock
-KOS firmware), the whole Yamaha ADPCM pool (`disc/wings64.aud`, built by `tools/audio/transcode.py` at
-`./run.sh disc`) sits in AICA RAM, and a virtual AI DAC paces the audio manager in real time
-(docs/audio-design.md). The gate cannot hear: `WINGS64_M4_OK` reads key-on/KEYONB/timing counters
-(`aud: t` lines). `./run.sh soak` runs 600 s of attract mode for `WINGS64_M4_SOAK_OK`.
-M3 facts still hold: Rocket Belt Beginner flight to results via `./run.sh gate`; flight ~30 fps in the air,
-~20 on the launch pad (emulator); Settings menu (FPS monitor, SD log); SD card log + crash hook.
-**Next: the maintainer burns the M4 hardware-test disc** (`./run.sh hwdisc`: FPS monitor + SD log on by
-default; copies live on the Jupiter NAS share under wings64-dc/) (`./run.sh run-hw`
-prints the checklist, audio items included). Hardware is truth; emulator numbers are hypotheses.
-To watch on the Mac: `./run.sh emu` (native Flycast, docs/flycast-macos.md) or `./run.sh play` (VNC).
+**M4 done 2026-10-11; frame-rate pass done in the emulator.** Music and SFX play in menus and flight
+(`src/dc/audio`: the decomp's own players drive alSyn voices -> AICA channels; the whole Yamaha ADPCM pool
+`disc/wings64.aud` sits in AICA RAM; docs/audio-design.md). Hardware runs (2026-10-11): boots from CD-R,
+audio "sounds really good", SD card log works (backported KOS 1c6398f SD driver, src/dc/kos_sd), frame rate
+was 15-25 fps, CPU-bound in the display-list interpreter. The fps pass (docs/fps-plan.md, kb/STATE.md
+table) found the root cause: the decomp's kernel idle spin stole ~44% of every frame because KOS v2.2.2
+ticks hand the CPU to any ready thread (patches/023 blocks it). Flycast: ~55-57 fps in every state, menus
+reach flight in half the time. Hardware confirmation pending (no burn scheduled).
+Visual bugs from hardware are queued (kb/STATE.md #2). Hardware discs: `./run.sh hwdisc` (FPS monitor, SD
+log, profiler); copies go to the Jupiter NAS share under wings64-dc/ with a .src.json (commit, sha256).
+To watch on the Mac: `./run.sh emu` (native Flycast) or `./run.sh play` (VNC).
 Gate scripts use state-relative steps (`s<state>+ms`, src/dc/autoplay.c) re-armed after >0.5 s poll gaps;
-run one emulator at a time; never turn the SD log on in Flycast.
+run one emulator at a time; never turn the SD log on in Flycast. Never edit a script while a background
+run is executing it (bash reads scripts lazily; the soak broke that way once).
 
 ## Reference clones used for planning (re-clone when needed; shallow is fine)
 | what | where | pin |

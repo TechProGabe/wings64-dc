@@ -47,3 +47,16 @@ replay diff guard determinism. Mechanism: `OPT_O2_SRC` list, knob `WINGS64_DECOM
 6. App -O2. 7. Change 7 last.
 Expected before the next hardware run: Flycast flight DL ~12 -> 7-8 ms, menus ~25 -> 12-14; hardware flight
 DL 25-27 -> ~13-16 ms if the I-cache reading holds (30 fps lock), ~18-20 if not (then -O2 decides).
+
+## Results (emulator, 2026-10-11)
+Executed in order 1, 5, 3, 4, fsqrt, 2, -O2, 6 (each with its kill switch and a gate pass), then the
+root cause turned up with two new instruments (per-thread CPU split, DL wall vs CPU):
+| step | title | menus | flight | results (DL median ms, Flycast) |
+|---|---|---|---|---|
+| baseline | 28.7 | 27-28 | 20.6 | 12.6 |
+| after 1-6, -O2, fsqrt | 20.5 | 21.0-21.3 | 17.9 | 7.8 |
+| + patches/023 (idle spin blocks) | 11.4 | 12.0-12.3 | 9.9 | 5.0 |
+Frame rate after 023: title 57, menus 54-56, flight 56, results 58 fps (was 22-33). The interpreter had been
+losing ~44% of its wall time to the decomp's kernel idle spin, which KOS v2.2.2's tick scheduling lets run
+whatever its priority (kb/traps.md). Not done: change 7 (gfx fast-math), now low value. Hardware numbers are
+the next evidence (`./run.sh hwdisc`).

@@ -26,7 +26,16 @@ typedef struct {
     void *arg;
 } dc_thread_t;
 static dc_thread_t sThreads[MAX_THREADS];
+
 static int sNumThreads;
+
+/* Thread i of the shim (N64 id and KOS thread) for the per-thread CPU log in main.c; 0 past the end. */
+int wings64_thread_info(int i, int *id, void **kthd) {
+    if (i < 0 || i >= sNumThreads) return 0;
+    *id = sThreads[i].t ? (int)sThreads[i].t->id : -1;
+    *kthd = sThreads[i].kthd;
+    return 1;
+}
 
 static dc_thread_t *find_thread(OSThread *t) {
     for (int i = 0; i < sNumThreads; i++)

@@ -22,3 +22,4 @@ Own additions: 002 (setimg opcode), 010 (debug vertex overrun), 011 (media copy 
 | 020 | UB: camera arrays declared shorter than used (ground view polygon); terrain culling |
 | 021 | port feature: title-screen Settings menu, FPS overlay hook, overlay font helper (`DIVERGES`) |
 | 022 | M4 audio: the audio task completes at once instead of queuing behind CPU display-list work (`DIVERGES`) |
+| 023 | kernel thread's idle spin blocks instead (KOS ticks gave the spin ~44% of every frame) (`DIVERGES`) |
