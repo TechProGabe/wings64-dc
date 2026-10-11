@@ -47,6 +47,18 @@ static float sMinW, sMaxW;
 #define MTX_DEPTH 11              /* gfx.md: 10 pushes + current */
 #endif
 #define DL_DEPTH 18
+#ifndef GUARD
+#define GUARD 4.0f   /* guard band: x/y clipped at +-GUARD*w so screen coordinates stay within the PVR's range */
+#endif
+/* docs/fps-plan.md change 5. WINGS64_OUTCODES: plane tests once per vertex in do_vtx, AND/OR per triangle.
+   WINGS64_MVP_LAZY: XMTRX = P * MV is reloaded only after a matrix change, not on every G_VTX (only do_mtx
+   and do_vtx touch XMTRX on this thread; KOS saves the XF bank on context switches). */
+#ifndef WINGS64_OUTCODES
+#define WINGS64_OUTCODES 1
+#endif
+#ifndef WINGS64_MVP_LAZY
+#define WINGS64_MVP_LAZY 1
+#endif
 
 /* ------------------------------------------------------------------ state */
 
@@ -56,6 +68,7 @@ typedef struct {
     float r, g, b, a;             /* shade 0..1 (a = vertex alpha) */
     float fog;                    /* 0..255 */
     /* --- not interpolated by the clipper (see lerp_vtx) --- */
+    uint32_t oc;                  /* outcode (do_vtx): bits 0-4 beyond x+ x- y+ y- near, bit 5 needs clipping */
     uint32_t pv_epoch;            /* draw-state epoch pv was computed for (0 = stale) */
     pvr_vertex_t pv;              /* final PVR vertex for the current state */
 } vtx_t;
@@ -158,8 +171,10 @@ static void do_vtx(uint32_t w0, uint32_t w1) {
     f3d_vtx_decode(w0, w1, &n, &v0, &len, &addr);
     src = ram(addr);
     /* Lights and texgen use eye-space normals per vertex (do_vtx); no per-matrix light update. */
-    shz_xmtrx_load_apply_4x4(&R.proj, &R.mv[R.mv_top]);   /* XMTRX = P * MV (N64: MV x P) */
-    R.mvp_dirty = 0;
+    if (!WINGS64_MVP_LAZY || R.mvp_dirty) {
+        shz_xmtrx_load_apply_4x4(&R.proj, &R.mv[R.mv_top]);   /* XMTRX = P * MV (N64: MV x P) */
+        R.mvp_dirty = 0;
+    }
     for (uint32_t i = 0; i < n && v0 + i < 16; i++, src += 16) {
         const int16_t *ob = (const int16_t *)src;
         const int16_t *tc = (const int16_t *)(src + 8);
@@ -168,6 +183,19 @@ static void do_vtx(uint32_t w0, uint32_t w1) {
         shz_vec4_t c = shz_xmtrx_transform_vec4(shz_vec4_init(ob[0], ob[1], ob[2], 1.0f));
         v->x = c.x; v->y = c.y; v->z = c.z; v->w = c.w;
         v->pv_epoch = 0;
+#if WINGS64_OUTCODES
+        {
+            float gw = GUARD * c.w;
+            uint32_t o = 0;
+            if (c.x > c.w) o |= 1;
+            if (c.x < -c.w) o |= 2;
+            if (c.y > c.w) o |= 4;
+            if (c.y < -c.w) o |= 8;
+            if (c.z < -c.w) o |= 16;
+            if (c.z + c.w < 0.0f || c.x > gw || c.x < -gw || c.y > gw || c.y < -gw) o |= 32;
+            v->oc = o;
+        }
+#endif
 #if DB_GFX_TRACE
         sVtxLoads++;
         if (c.w < sMinW) sMinW = c.w;
@@ -600,6 +628,15 @@ static void do_tri(int ia, int ib, int ic) {
        (shadow volumes, gfx.md); those triangles never reach the N64 screen. Dropped here for now; a
        PVR depth-only pass would be needed to reproduce the shadows themselves. */
     if (R.cimg == R.zimg && R.cimg != 0) return;
+#if WINGS64_OUTCODES
+    /* Trivial reject: all three beyond the same side plane (x+, x-, y+, y-, near; no far plane). */
+    if (v[0]->oc & v[1]->oc & v[2]->oc & 31) {
+#if DB_GFX_TRACE
+        sRejTrivial++;
+#endif
+        return;
+    }
+#else
     /* Trivial reject: all three beyond the same side plane (x+, x-, y+, y-, near; no far plane). */
     {
         int plane = -1;
@@ -618,19 +655,21 @@ static void do_tri(int ia, int ib, int ic) {
             return;
         }
     }
+#endif
 #ifdef DB_GFX_NO_CULL
     const uint32_t cullmask = 0;   /* debug: no back-face culling */
 #else
     const uint32_t cullmask = F3D_G_CULL_FRONT | F3D_G_CULL_BACK;
 #endif
-#ifndef GUARD
-#define GUARD 4.0f   /* guard band: x/y clipped at +-GUARD*w so screen coordinates stay within the PVR's range */
-#endif
+#if WINGS64_OUTCODES
+    int needs_clip = ((v[0]->oc | v[1]->oc | v[2]->oc) & 32) != 0;
+#else
     int needs_clip = 0;
     for (int i = 0; i < 3; i++) {
         float gw = GUARD * v[i]->w;
         if (v[i]->z + v[i]->w < 0.0f || v[i]->x > gw || v[i]->x < -gw || v[i]->y > gw || v[i]->y < -gw) needs_clip = 1;
     }
+#endif
     /* Triangles crossing the near plane are culled after clipping (below): their orientation before
        clipping is not reliable once a vertex is behind the eye. */
     if ((R.geom & cullmask) && !needs_clip) {
@@ -973,6 +1012,7 @@ void gfx_f3d_run(const void *dl) {
     t1 = timer_us_gettime64();
     DIRTY();
     R.mv_top = 0;
+    R.mvp_dirty = 1;
 #if DB_GFX_TRACE
     {
         /* Trace only in flight (game state 5) to keep menus at speed; DB_GFX_TRACE_ALL traces everything. */
