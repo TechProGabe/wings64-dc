@@ -16,7 +16,7 @@ patches/023; next: confirm on hardware, then the visual bugs).
 | audio | AICA driver (src/dc/audio), whole pool resident (1,860,032 of 1,900,544 B), reverb off (DIVERGES); hardware 22.3-22.5 kHz, 0 misses, "sounds really good" | docs/audio-design.md, hw log |
 | SD log on hardware | works with the backported KOS 1c6398f SD stack (src/dc/kos_sd); 8.3 names WINGS64/LOGNNN.TXT; state under the FPS counter | state-log 2026-10-11 |
 | hardware tools | `./run.sh hwdisc` (FPS monitor + SD log + DB_PROF on), profiler dumps per game state and on L+R+Start, `tools/prof/decode_prof.py`, `scripts/gfxstat.sh` | docs/testing.md |
-| last hardware disc | NAS wings64-dc/wings64-dc-20261011d-fps.cdi (462f919-1011-2314: fps pass + patches/023; FPS, SD log, profiler on); not yet run on hardware | NAS .src.json |
+| last hardware disc | NAS wings64-dc/wings64-dc-20261011e-shadows-splash.cdi (+ -dd, .elf; 123d29e-1012-0123: shadow modifier volumes, draw order, splash, stall watchdog, uv: diagnostics; FPS, SD log, profiler on); not yet run on hardware | NAS .src.json |
 | toolchain | image `wings64-dc:ce773e5503b9`: GCC 14.3.0, KOS v2.2.2 `c23410b` (-m4-single-only), mkdcdisc v0.0.4 | `docker/pins.env` |
 | decomp pin | `1a8558f`, **25 patches** (all `WINGS64_DC`-guarded; 022 audio task, 023 idle spin, 024 game diagnostics to log, 025 port splash) | `patches/README.md` |
 | build | decomp at -O2 (WINGS64_DECOMP_O2), text 947,540 B; purity OK (184 decomp TUs) | `kos-size`, `make purity` |
