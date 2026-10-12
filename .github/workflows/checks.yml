@@ -1,0 +1,18 @@
+# ROM-free checks on every push: tree checks (ROM leak, patch rules, DIVERGES marks, sh4zam names) and the
+# audio codec tests. No ROM, no toolchain, no release here: releases are cut locally (CLAUDE.md).
+name: checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: ./run.sh test --ci

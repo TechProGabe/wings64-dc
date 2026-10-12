@@ -1,4 +1,16 @@
-# wings64-dc
+<p align="center">
+  <img src="docs/logo.svg" alt="wings64-dc" width="640">
+</p>
+
+<p align="center">
+  <a href="https://github.com/TechProGabe/wings64-dc/actions/workflows/checks.yml"><img src="https://github.com/TechProGabe/wings64-dc/actions/workflows/checks.yml/badge.svg" alt="checks"></a>
+  <img src="https://img.shields.io/badge/platform-Sega%20Dreamcast-ff6600" alt="platform: Sega Dreamcast">
+  <img src="https://img.shields.io/badge/runs%20on-real%20hardware-2ea44f" alt="runs on real hardware">
+  <img src="https://img.shields.io/badge/KallistiOS-v2.2.2-1f6fe0" alt="KallistiOS v2.2.2">
+  <img src="https://img.shields.io/badge/math-sh4zam-8a2be2" alt="math: sh4zam">
+  <img src="https://img.shields.io/badge/language-C-555555" alt="language: C">
+  <img src="https://img.shields.io/badge/ROM-not%20included-lightgrey" alt="ROM not included">
+</p>
 
 Pilotwings 64, running natively on a Sega Dreamcast. No emulator: the game's own code, rebuilt for the SH-4.
 
@@ -42,5 +54,7 @@ This port stands on a lot of other people's work:
 - **[KallistiOS](https://github.com/KallistiOS/KallistiOS)**, the Dreamcast dev kit everything runs on.
 - **[sh4zam](https://github.com/gyrovorbis/sh4zam)** by Falco Girgis and contributors (MIT). All the fast SH-4 math.
 - **[Flycast](https://github.com/flyinghead/flycast)**, which does most of my testing, and **[mkdcdisc](https://gitlab.com/simulant/mkdcdisc)**, which makes the disc images.
+
+The logo is my own drawing. The lettering is [Titan One](https://fonts.google.com/specimen/Titan+One) by Rodrigo Fuenzalida (SIL Open Font License), and `tools/logo/make_logo.py` rebuilds it.
 
 Pilotwings 64 belongs to Nintendo and Paradigm. This is an unofficial fan project.
