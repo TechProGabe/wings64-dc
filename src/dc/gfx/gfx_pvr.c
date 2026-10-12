@@ -12,6 +12,7 @@
 #define VB_OP (768 * 1024)
 #define VB_PT (256 * 1024)
 #define VB_TR (512 * 1024)
+#define VB_MOD (64 * 1024)
 
 gpvr_stats_t gpvr_stats;
 static uint8_t *vbuf[3];
@@ -22,6 +23,12 @@ int gpvr_active = 0;             /* list of the current state (read by gpvr_tri_
 #define active gpvr_active
 uint32_t gpvr_state_serial;      /* bumped whenever the active list or its header may have changed */
 static size_t used[3], cap[3];
+
+#if WINGS64_SHADOW_MOD
+/* OP modifier list (shadow volumes): its own DMA buffer, written directly (64-byte volume triangles). */
+static uint8_t *mbuf, *mbase, *mwp, *mwend;
+static float shadow_scale = 1.0f, shadow_scale_set = -1.0f;
+#endif
 
 /* Direct emit (docs/fps-plan.md change 1): vertices and headers are written straight into this frame's
    half of each list's DMA buffer (pvr_set_vertbuf splits the buffer in two), one allocated cache line per
@@ -43,10 +50,19 @@ void gpvr_init(void) {
         pvr_set_vertbuf(list_id[i], vbuf[i], cap[i]);
     }
     pvr_set_zclip(0.0f);
+#if WINGS64_SHADOW_MOD
+    mbuf = memalign(32, VB_MOD);
+    if (!mbuf) arch_abort();
+    pvr_set_vertbuf(PVR_LIST_OP_MOD, mbuf, VB_MOD);
+#endif
 }
 
 void gpvr_frame_begin(uint32_t bg_argb) {
-    pvr_wait_ready();
+    if (pvr_wait_ready() < 0) {
+        /* KOS gives up after 100 ms: the previous scene never finished (a wedged TA/ISP on hardware). */
+        static unsigned timeouts;
+        if (++timeouts <= 8 || timeouts % 100 == 0) db_log("pvr: wait ready timed out (%u so far)\n", timeouts);
+    }
     pvr_set_bg_color(((bg_argb >> 16) & 0xFF) / 255.0f, ((bg_argb >> 8) & 0xFF) / 255.0f, (bg_argb & 0xFF) / 255.0f);
     pvr_scene_begin();
     memset(cur_valid, 0, sizeof cur_valid);
@@ -58,12 +74,62 @@ void gpvr_frame_begin(uint32_t bg_argb) {
         wend[i] = wbase[i] + cap[i] / 2 - 64;   /* this frame's half, as pvr_set_vertbuf sized it */
     }
 #endif
+#if WINGS64_SHADOW_MOD
+    mbase = mwp = pvr_vertbuf_tail(PVR_LIST_OP_MOD);
+    mwend = mbase + VB_MOD / 2 - 64;
+#endif
 }
+
+#if WINGS64_SHADOW_MOD
+static void mod_hdr(uint32_t mode) {
+    pvr_mod_compile((pvr_mod_hdr_t *)mwp, PVR_LIST_OP_MOD, mode, PVR_CULLING_NONE);
+    /* The closing header also needs the parameter control word's Volume bit (bit 6: last polygon of the
+       volume), which KOS v2.2.2's pvr_mod_compile never sets. Without it Flycast ORs the closing triangle
+       in as an open volume (it shadowed that triangle's whole projection). */
+    if (mode != PVR_MODIFIER_OTHER_POLY) ((pvr_mod_hdr_t *)mwp)->cmd |= 1u << 6;
+    mwp += 32;
+}
+
+static void mod_tri(const float *t) {
+    pvr_modifier_vol_t *v = (pvr_modifier_vol_t *)mwp;
+    v->flags = PVR_CMD_VERTEX_EOL;
+    v->ax = t[0]; v->ay = t[1]; v->az = t[2];
+    v->bx = t[3]; v->by = t[4]; v->bz = t[5];
+    v->cx = t[6]; v->cy = t[7]; v->cz = t[8];
+    v->d1 = v->d2 = v->d3 = v->d4 = v->d5 = v->d6 = 0;
+    mwp += 64;
+}
+
+/* One volume = one OTHER_POLY header and its triangles, then an INCLUDE_LAST_POLY header and the closing
+   triangle; inside = odd number of volume surfaces in front of the pixel. A header per triangle restarts
+   the volume (Flycast showed only the last triangle shadowing). */
+void gpvr_mod_volume(const float *tris, int n) {
+    if (n <= 0) return;
+    if (mwp + 64 + (size_t)n * 64 > mwend) { gpvr_stats.overflow++; return; }
+    if (n > 1) {
+        mod_hdr(PVR_MODIFIER_OTHER_POLY);
+        for (int i = 0; i < n - 1; i++) mod_tri(tris + i * 9);
+    }
+    mod_hdr(PVR_MODIFIER_INCLUDE_LAST_POLY);
+    mod_tri(tris + (n - 1) * 9);
+}
+
+void gpvr_shadow_scale(float scale) { shadow_scale = scale; }
+#endif
 
 void gpvr_frame_end(void) {
 #if WINGS64_DIRECT_EMIT
     for (int i = 0; i < 3; i++)
         if (wp[i] != wbase[i]) pvr_vertbuf_written(list_id[i], (size_t)(wp[i] - wbase[i]));
+#endif
+#if WINGS64_SHADOW_MOD
+    if (mwp == mbase) {
+        /* An enabled list must hold something; KOS's blank filler is a polygon header, not a volume. */
+        static const float empty[9] = { -64.0f, -64.0f, 1e-6f, -63.0f, -64.0f, 1e-6f, -64.0f, -63.0f, 1e-6f };
+        gpvr_mod_volume(empty, 1);
+    }
+    pvr_vertbuf_written(PVR_LIST_OP_MOD, (size_t)(mwp - mbase));
+    if (shadow_scale != shadow_scale_set) { pvr_set_shadow_scale(1, shadow_scale); shadow_scale_set = shadow_scale; }
 #endif
     pvr_scene_finish();
 }
@@ -112,6 +178,14 @@ static void compile_and_emit(const gpvr_state_t *st) {
     cxt.gen.fog_type = st->fog ? PVR_FOG_VERTEX : PVR_FOG_DISABLE;
     cxt.depth.comparison = st->depth_cmp;
     cxt.depth.write = st->depth_write ? PVR_DEPTHWRITE_ENABLE : PVR_DEPTHWRITE_DISABLE;
+#if WINGS64_SHADOW_MOD
+    /* Depth-tested geometry receives shadow volumes (cheap shadow: colour scaled inside a volume; OP volumes
+       act on the OP and PT lists). Screen-space layers (HUD, sky) stay as they are. */
+    if (st->depth_cmp != PVR_DEPTHCMP_ALWAYS) {
+        cxt.fmt.modifier = PVR_MODIFIER_ENABLE;
+        cxt.gen.modifier_mode = PVR_MODIFIER_CHEAP_SHADOW;
+    }
+#endif
     if (st->list == GPVR_TR) {
         cxt.blend.src = st->blend_src;
         cxt.blend.dst = st->blend_dst;

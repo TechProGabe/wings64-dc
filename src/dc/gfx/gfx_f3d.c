@@ -468,6 +468,11 @@ static uint32_t sample_hash(const uint8_t *p, uint32_t bytes) {
 #ifndef WINGS64_TEX_MEMO
 #define WINGS64_TEX_MEMO 1
 #endif
+/* LOADBLOCK dxt that does not match the tile's line: exact RDP odd-line swap (gfx_texconv.c).
+   Kill switch -DWINGS64_DXT_EXACT=0. */
+#ifndef WINGS64_DXT_EXACT
+#define WINGS64_DXT_EXACT 1
+#endif
 #if WINGS64_TEX_MEMO
 #define TEX_MEMO_SLOTS 64
 static struct { uint32_t frame, addr, fmtkey; gpvr_tex_t *gt; uint16_t w, h; } sTexMemo[TEX_MEMO_SLOTS];
@@ -524,6 +529,10 @@ static COLD gpvr_tex_t *texture_for_tile(int tidx) {
 #endif
     shz_memcpy(raw, ram(ld->addr), (bytes + 7) & ~7u);
     if (ld->dxt == 0) texconv_deswizzle(raw, line, bytes / line);  /* pre-swizzled data (gfx.md) */
+#if WINGS64_DXT_EXACT
+    else if (t->siz != 3 && ((uint32_t)ld->dxt * (line / 8) != 2048u))   /* dxt not sized for this line */
+        texconv_deswizzle_dxt(raw, line, bytes / line, ld->dxt);
+#endif
     pf = texconv_convert(raw, line, w, h, (n64_fmt_t)t->fmt, (n64_siz_t)t->siz, 1, conv, w, h);
     sTexMiss = "format";
     if (pf == PVRFMT_UNSUPPORTED) return NULL;
@@ -562,6 +571,42 @@ static float shift_scale(int sh) {
 }
 
 /* ------------------------------------------------------------- draw state */
+
+/* Cross-list draw order. The N64 draws strictly in submission order; the PVR renders all OP, then PT, then
+   TR polygons, and only depth orders them across lists. Layers drawn without a depth test therefore need
+   help (hardware run: a translucent horizon band the game draws before the scene showed through the glider):
+   - before the frame's first z-tested draw (sky, ground plane, horizon band, 2D menu backgrounds) each layer
+     gets a tiny painter depth that grows with submission order, tested GEQUAL and written by OP/PT, so later
+     layers and all 3D geometry (z = 1/w, far larger) cover earlier ones whatever their list;
+   - after it (HUD, overlays) depth-ALWAYS layers go to the TR list, which keeps submission order and comes
+     after every OP/PT polygon. DIVERGES: z-tested geometry drawn after an overlay ends up under it.
+   Kill switch -DWINGS64_LAYER_Z=0. */
+#ifndef WINGS64_LAYER_Z
+#define WINGS64_LAYER_Z 1
+#endif
+#define LAYER_STEP 1e-10f          /* 4000 layers stay under 4e-7; scene 1/w stays above ~5e-5 */
+#define LAYER_MAX 4000
+static float sLayerZ;              /* >0: painter depth of the current background layer */
+static int sLayerN, sSceneZ;       /* layers this frame; a z-tested draw has happened this frame */
+
+static void layer_fix(gpvr_state_t *st) {
+#if WINGS64_LAYER_Z
+    sLayerZ = 0.0f;
+    if (st->depth_cmp != PVR_DEPTHCMP_ALWAYS) { sSceneZ = 1; return; }
+    if (!sSceneZ) {
+        if (sLayerN < LAYER_MAX) sLayerN++;
+        sLayerZ = LAYER_STEP * (float)sLayerN;
+        st->depth_cmp = PVR_DEPTHCMP_GEQUAL;
+        st->depth_write = st->list != GPVR_TR;
+    } else if (st->list != GPVR_TR) {
+        st->blend_src = st->list == GPVR_PT ? PVR_BLEND_SRCALPHA : PVR_BLEND_ONE;
+        st->blend_dst = st->list == GPVR_PT ? PVR_BLEND_INVSRCALPHA : PVR_BLEND_ZERO;
+        st->list = GPVR_TR;
+    }
+#else
+    (void)st;
+#endif
+}
 
 static OUTLINE int draw_state(int textured_possible, int depth_override_always, gpvr_state_t *st) {
     uint32_t rm = R.oml;
@@ -646,7 +691,7 @@ static HOT void to_pvr(const vtx_t *v, pvr_vertex_t *o, int textured, int decal)
     o->flags = PVR_CMD_VERTEX;
     o->x = (R.vp_tx + v->x * iw * R.vp_sx) * SCALE;
     o->y = (R.vp_ty - v->y * iw * R.vp_sy) * SCALE;
-    o->z = decal ? iw * 1.003f : iw;
+    o->z = sLayerZ > 0.0f ? sLayerZ : decal ? iw * 1.003f : iw;
     if (textured) {
         o->u = v->s * cur_u_scale - cur_u_off;   /* ((s * shift) - uls) / w, folded per draw state */
         o->v = v->t * cur_v_scale - cur_v_off;
@@ -729,13 +774,79 @@ static COLD void clip_tri(vtx_t *const v[3], int textured, int decal) {
     emit_poly(out, n, textured, decal);
 }
 
+/* ------------------------------------------------------------ shadow volumes */
+
+/* PW64 draws vehicle shadows as z-buffer shadow volumes (kernel/graphics.c uvGfxStateDrawDL): pass 1 draws
+   the volume's back faces with the colour image pointed at the z-buffer (cimg == zimg), writing "nearest"
+   wherever they are visible; pass 2 draws the same display list's front faces as dark translucent shade,
+   z-tested, so only terrain inside the volume darkens. The PVR has this natively: pass 1's triangles (all of
+   them, culling ignored) become one OP cheap-shadow modifier volume, and pass 2's display list call is
+   skipped. A volume that crosses the near plane or projects far off-screen is dropped for that frame (an
+   opened volume would invert its inside test). DIVERGES: shadow intensity is one global PVR register,
+   taken from the volume's vertex alpha (pass 2 blends shade with that alpha).
+   Kill switch -DWINGS64_SHADOW_MOD=0 (gfx_pvr.h): both passes dropped, no shadows. */
+#define VOL_MAX 256
+#define VOL_COORD_MAX 16384.0f    /* screen pixels; beyond this the volume is dropped, not distorted */
+static float sVol[VOL_MAX * 9];
+static int sVolN, sVolBad;
+static float sVolAlpha;
+static int sVolAlphaN;
+static uint32_t sShadowDL;        /* display list pass 1 drew: pass 2 calls it again (skipped) */
+static int sShadowRec;            /* sShadowDL taken in this pass 1 (its nested calls are not the one) */
+
+static void shadow_capture(vtx_t *const v[3]) {
+#if WINGS64_SHADOW_MOD
+    float *o;
+    int behind = 0;
+    for (int i = 0; i < 3; i++) behind += v[i]->z + v[i]->w < 0.0f || v[i]->w < 1e-4f;
+    if (behind == 3) return;                   /* wholly behind the eye: covers no pixel */
+    if (behind || sVolN == VOL_MAX) { sVolBad = 1; return; }
+    o = &sVol[sVolN * 9];
+    for (int i = 0; i < 3; i++) {
+        float iw = shz_invf(v[i]->w);
+        float x = (R.vp_tx + v[i]->x * iw * R.vp_sx) * SCALE, y = (R.vp_ty - v[i]->y * iw * R.vp_sy) * SCALE;
+        if (x > VOL_COORD_MAX || x < -VOL_COORD_MAX || y > VOL_COORD_MAX || y < -VOL_COORD_MAX) { sVolBad = 1; return; }
+        o[i * 3 + 0] = x; o[i * 3 + 1] = y; o[i * 3 + 2] = iw;
+        sVolAlpha += v[i]->a;
+        sVolAlphaN++;
+    }
+    sVolN++;
+#else
+    (void)v;
+#endif
+}
+
+/* Pass 1 ended (colour image back on the frame buffer) or the frame ended. */
+static void shadow_flush(void) {
+#if DB_GFX_TRACE
+    if (sVolN || sVolBad) {
+        static int nlog;
+        if (nlog < 12) {
+            nlog++;
+            db_log("  shadow volume: %d tris%s, alpha avg %.2f\n", sVolN, sVolBad ? " (dropped)" : "",
+                   sVolAlphaN ? sVolAlpha / (float)sVolAlphaN : 0.0f);
+            for (int i = 0; i < sVolN && i < 24; i++)
+                db_log("    vt%d %.0f,%.0f,%.3g %.0f,%.0f,%.3g %.0f,%.0f,%.3g\n", i, sVol[i * 9], sVol[i * 9 + 1], sVol[i * 9 + 2],
+                       sVol[i * 9 + 3], sVol[i * 9 + 4], sVol[i * 9 + 5], sVol[i * 9 + 6], sVol[i * 9 + 7], sVol[i * 9 + 8]);
+        }
+    }
+#endif
+#if WINGS64_SHADOW_MOD
+    if (sVolN && !sVolBad) {
+        float a = sVolAlphaN ? sVolAlpha / (float)sVolAlphaN : 0.5f;
+        gpvr_mod_volume(sVol, sVolN);
+        gpvr_shadow_scale(a < 0.0f ? 1.0f : a > 1.0f ? 0.0f : 1.0f - a);
+    }
+#endif
+    sVolN = sVolBad = sVolAlphaN = sShadowRec = 0;
+    sVolAlpha = 0.0f;
+}
+
 static HOT void do_tri(int ia, int ib, int ic) {
     vtx_t *v[3] = { &R.vc[ia], &R.vc[ib], &R.vc[ic] };
     int textured, decal;
-    /* DIVERGES: with the colour image pointed at the z-buffer (cimg == zimg) the game writes depth only
-       (shadow volumes, gfx.md); those triangles never reach the N64 screen. Dropped here for now; a
-       PVR depth-only pass would be needed to reproduce the shadows themselves. */
-    if (R.cimg == R.zimg && R.cimg != 0) return;
+    /* Colour image pointed at the z-buffer (cimg == zimg): shadow volume pass 1 (see shadow_capture). */
+    if (R.cimg == R.zimg && R.cimg != 0) { shadow_capture(v); return; }
 #if WINGS64_OUTCODES
     /* Trivial reject: all three beyond the same side plane (x+, x-, y+, y-, near; no far plane). */
     if (v[0]->oc & v[1]->oc & v[2]->oc & 31) {
@@ -802,6 +913,7 @@ static HOT void do_tri(int ia, int ib, int ic) {
         sStDump = 0;
 #endif
         draw_state(1, 0, &sState); sStateEpoch = sEpoch;
+        layer_fix(&sState);
 #if DB_GFX_TRACE
         if (sTrace)
             db_log("  st geom %06lx cc %08lx:%08lx omh %08lx oml %08lx list %d tex %d %dx%d fit %d nl %d prim %02x%02x%02x env %02x%02x%02x\n",
@@ -852,10 +964,11 @@ static void screen_quad(float x0, float y0, float x1, float y1, float s0, float 
         u0 = (s0 - cur_uls) * iw; u1 = (s1 - cur_uls) * iw;
         v0 = (t0 - cur_ult) * ih; v1 = (t1 - cur_ult) * ih;
     }
-    q[0] = (gpvr_vtx_t){ x0 * SCALE, y0 * SCALE, 1.0f, u0, v0, argb, oargb };
-    q[1] = (gpvr_vtx_t){ x1 * SCALE, y0 * SCALE, 1.0f, u1, v0, argb, oargb };
-    q[2] = (gpvr_vtx_t){ x0 * SCALE, y1 * SCALE, 1.0f, u0, v1, argb, oargb };
-    q[3] = (gpvr_vtx_t){ x1 * SCALE, y1 * SCALE, 1.0f, u1, v1, argb, oargb };
+    float z = sLayerZ > 0.0f ? sLayerZ : 1.0f;
+    q[0] = (gpvr_vtx_t){ x0 * SCALE, y0 * SCALE, z, u0, v0, argb, oargb };
+    q[1] = (gpvr_vtx_t){ x1 * SCALE, y0 * SCALE, z, u1, v0, argb, oargb };
+    q[2] = (gpvr_vtx_t){ x0 * SCALE, y1 * SCALE, z, u0, v1, argb, oargb };
+    q[3] = (gpvr_vtx_t){ x1 * SCALE, y1 * SCALE, z, u1, v1, argb, oargb };
     gpvr_tri(&q[0], &q[1], &q[2]);
     gpvr_tri(&q[1], &q[3], &q[2]);
 }
@@ -913,6 +1026,7 @@ static OUTLINE void do_fillrect(uint32_t w0, uint32_t w1) {
     } else {
         rect_colors(0, &argb, &oargb);
     }
+    layer_fix(&st);
     gpvr_set_state(&st);
     TRACE("  fill %d,%d-%d,%d cyc %d list %d argb %08lx oml %08lx cimg %08lx\n", ulx, uly, lrx, lry, cycle, st.list,
           (unsigned long)argb, (unsigned long)R.oml, (unsigned long)R.cimg);
@@ -944,6 +1058,7 @@ static OUTLINE void do_texrect(uint32_t w0, uint32_t w1) {
     }
     st.fog = 0;
     if (st.tex && (cycle == 2 || (x1 - x0) * fdx < 64.0f)) st.filter = PVR_FILTER_NEAREST; /* 1:1 blits (gfx.md) */
+    layer_fix(&st);
     gpvr_set_state(&st);
     rect_colors(st.tex != NULL, &argb, &oargb);
     TRACE("  texrect %.0f,%.0f-%.0f,%.0f tile %d tex %d list %d argb %08lx cyc %d\n", x0, y0, x1, y1, tile,
@@ -990,6 +1105,8 @@ static HOT void run_dl(const uint32_t *pc) {
         case F3D_G_DL: {
             uint8_t push; uint32_t addr;
             f3d_dl_decode(w0, w1, &push, &addr);
+            if (R.cimg == R.zimg && R.cimg != 0) { if (!sShadowRec) { sShadowDL = addr; sShadowRec = 1; } }  /* pass 1 */
+            else if (sShadowDL && addr == sShadowDL) { sShadowDL = 0; break; } /* pass 2: the volume replaces it */
             if (push) { if (sp == DL_DEPTH) return; stack[sp++] = pc; }
             pc = ram(addr);
         } break;
@@ -1071,7 +1188,10 @@ static HOT void run_dl(const uint32_t *pc) {
         case F3D_G_SETFOGCOLOR: gpvr_fog_color(0xFF000000u | (w1 >> 8)); break;
         case F3D_G_SETBLENDCOLOR: break;
         case F3D_G_SETFILLCOLOR: R.fill = w1; break;
-        case F3D_G_SETCIMG: R.cimg = w1 & 0x1FFFFFFFu; break;
+        case F3D_G_SETCIMG:
+            if (R.cimg == R.zimg && R.cimg != 0 && (w1 & 0x1FFFFFFFu) != R.zimg) shadow_flush();
+            R.cimg = w1 & 0x1FFFFFFFu;
+            break;
         case F3D_G_SETZIMG: R.zimg = w1 & 0x1FFFFFFFu; break;
         case F3D_G_RDPLOADSYNC: case F3D_G_RDPPIPESYNC: case F3D_G_RDPTILESYNC: case F3D_G_RDPFULLSYNC:
         case F3D_G_SETSCISSOR: case F3D_G_SPNOOP: case F3D_G_NOOP:
@@ -1110,6 +1230,7 @@ HOT void gfx_f3d_run(const void *dl) {
     DIRTY();
     R.mv_top = 0;
     R.mvp_dirty = 1;
+    sLayerZ = 0.0f; sLayerN = sSceneZ = 0;
 #if WINGS64_TEX_MEMO
     sTexFrame++;            /* per-frame memo: textures may change between display lists */
 #endif
@@ -1129,6 +1250,8 @@ HOT void gfx_f3d_run(const void *dl) {
     TRACE("trace frame %lu\n", (unsigned long)sFrames);
 #endif
     run_dl(dl);
+    shadow_flush();
+    sShadowDL = 0;
 #if DB_GFX_TRACE
     TRACE("  tris op %lu pt %lu tr %lu | rej %lu cull %lu clip %lu vtx %lu w %.3g..%.3g\n", (unsigned long)sListTris[0],
           (unsigned long)sListTris[1], (unsigned long)sListTris[2], (unsigned long)sRejTrivial, (unsigned long)sRejCull,

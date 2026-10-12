@@ -17,6 +17,8 @@ unsigned texconv_line_bytes(unsigned width, n64_siz_t siz);
 /* Undo the TMEM swizzle in place: on odd rows, swap the two 32-bit halves of each 8-byte group.
    Self-inverse. `line_bytes` must be a multiple of 8. */
 void texconv_deswizzle(uint8_t *data, unsigned line_bytes, unsigned rows);
+/* General LOADBLOCK odd-line swap for any dxt (see gfx_texconv.c). */
+void texconv_deswizzle_dxt(uint8_t *data, unsigned line_bytes, unsigned rows, unsigned dxt);
 
 /* Next power of two >= n, clamped to [8, 1024]. */
 unsigned texconv_pow2(unsigned n);

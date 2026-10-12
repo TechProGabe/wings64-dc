@@ -43,6 +43,16 @@ extern uint32_t gpvr_state_serial;
 /* One triangle in the current state's list. Vertices in any winding (culling is done before). */
 void gpvr_tri(const gpvr_vtx_t *a, const gpvr_vtx_t *b, const gpvr_vtx_t *c);
 void gpvr_fog_color(uint32_t argb);
+
+/* Shadow volumes as PVR cheap-shadow modifier volumes (gfx_f3d.c shadow_*). Kill switch
+   -DWINGS64_SHADOW_MOD=0: no modifier list, shadow volumes are not drawn at all. */
+#ifndef WINGS64_SHADOW_MOD
+#define WINGS64_SHADOW_MOD 1
+#endif
+/* One closed volume: n triangles, 9 floats each (x, y, z per corner; screen pixels, z = 1/w). */
+void gpvr_mod_volume(const float *tris, int n);
+/* Cheap-shadow intensity inside volumes (1 = no change, 0 = black); applied at frame end. */
+void gpvr_shadow_scale(float scale);
 /* Same, from ready PVR vertices (flags are set here). */
 void gpvr_tri_pv(const pvr_vertex_t *a, const pvr_vertex_t *b, const pvr_vertex_t *c);
 
