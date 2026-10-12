@@ -8,32 +8,29 @@
 > for all math. Never commit ROM material. Mark departures `DIVERGES`. Report
 > hardware results, not emulator ones, as evidence.
 
-## Next-run seed prompt (after the frame-rate pass, written 2026-10-11)
+## Next-run seed prompt (after hardware run 11, written 2026-10-12)
 > You are executing wings64-dc (~/Documents/GitHub/wings64-dc), a native Dreamcast port of Pilotwings 64
-> from its decomp. Read `CLAUDE.md`, `kb/RESUME.md`, `kb/STATE.md` (current numbers + queue), `kb/traps.md`
-> (the KOS scheduler and SD entries at the end), `docs/fps-plan.md` (results at the end). M0-M4 pass in the
-> emulator gate; two hardware runs exist (audio good, SD log works, 15-25 fps before the fps pass). The fps
-> pass (patches/023 + kill-switched changes) took Flycast to ~55-57 fps. If the maintainer brings hardware
-> logs from a `./run.sh hwdisc` disc, read them first (`scripts/gfxstat.sh LOGNNN.TXT`, `cpu:` lines,
-> `tools/prof/decode_prof.py PROFnnn.BIN <elf from the NAS>`). Otherwise work the queue: the visual bugs
-> (the Rocket Belt column reproduces in Flycast), then menu loads, then M5. Binding rules: CLAUDE.md §1.
-> The maintainer limits subagents (Fable consults; Haiku agents up to 5 when they clearly help).
+> from its decomp. Read `CLAUDE.md`, `kb/RESUME.md`, `kb/STATE.md` (numbers, graphics-fix table, queue),
+> `kb/traps.md` (the visual-pass sections at the end), `kb/levers.md`. M0-M4 pass in the emulator gate; eleven
+> hardware runs exist: flight 45-51 fps, audio good, water/horizon/target/fades/title/photo album confirmed by
+> the maintainer. If the maintainer brings an SD card, copy `/Volumes/DCLOG/WINGS64/LOGNNN.TXT` (RECEIPT.TXT
+> names it) to `build/hwlogs/runN/` and read it first. Otherwise work the queue in kb/STATE.md. Flycast hides
+> hardware-only effects (render scaler, I-cache, tiny depths): say so when a fix is only emulator-checked.
+> Binding rules: CLAUDE.md §1. The maintainer limits subagents (Fable consults; Haiku agents up to 5).
 
 ## Where the port is
-**M4 done 2026-10-11; frame-rate pass done in the emulator.** Music and SFX play in menus and flight
-(`src/dc/audio`: the decomp's own players drive alSyn voices -> AICA channels; the whole Yamaha ADPCM pool
-`disc/wings64.aud` sits in AICA RAM; docs/audio-design.md). Hardware runs (2026-10-11): boots from CD-R,
-audio "sounds really good", SD card log works (backported KOS 1c6398f SD driver, src/dc/kos_sd), frame rate
-was 15-25 fps, CPU-bound in the display-list interpreter. The fps pass (docs/fps-plan.md, kb/STATE.md
-table) found the root cause: the decomp's kernel idle spin stole ~44% of every frame because KOS v2.2.2
-ticks hand the CPU to any ready thread (patches/023 blocks it). Flycast: ~55-57 fps in every state, menus
-reach flight in half the time. Hardware confirmation pending (no burn scheduled).
-Visual bugs from hardware are queued (kb/STATE.md #2). Hardware discs: `./run.sh hwdisc` (FPS monitor, SD
-log, profiler); copies go to the Jupiter NAS share under wings64-dc/ with a .src.json (commit, sha256).
-To watch on the Mac: `./run.sh emu` (native Flycast) or `./run.sh play` (VNC).
-Gate scripts use state-relative steps (`s<state>+ms`, src/dc/autoplay.c) re-armed after >0.5 s poll gaps;
-run one emulator at a time; never turn the SD log on in Flycast. Never edit a script while a background
-run is executing it (bash reads scripts lazily; the soak broke that way once).
+**M4 done; hardware-confirmed through run 11 (2026-10-12).** Music and SFX play in menus and flight
+(`src/dc/audio`; docs/audio-design.md). The fps pass (patches/023: the decomp's kernel idle spin stole ~44% of
+every frame) took hardware flight from 23-25 to 45-51 fps. The Fast3D interpreter (`src/dc/gfx/gfx_f3d.c`) now
+handles: shadow volumes as PVR modifier volumes, painter depth for pre-scene no-Z layers that keeps perspective
+(the sea), far-plane clipping as on Fast3D, coplanar draw-order bias (landing pads), SUBSCREEN fades stretched to
+the screen, a frozen frame under fade-outs (patches/026), the title fit, and the photo album's persistent frame
+(patches/028: front-buffer readback of only the rectangles drawn, because KOS's 480i render scaler re-filters
+every capture and run-time scaler writes hang the PVR). Each has a kill switch (kb/STATE.md table).
+Hardware discs: `./run.sh hwdisc` (FPS monitor, SD log, profiler, L+R graphics toggles); copies go to the NAS
+share wings64-dc/ with a .src.json (commit, sha256). To watch on the Mac: `./run.sh emu` or `./run.sh play`.
+Gate scripts use state-relative steps (`s<state>+ms`, src/dc/autoplay.c); run one emulator at a time; never turn
+the SD log on in Flycast; never edit a script while a background run executes it.
 
 ## Reference clones used for planning (re-clone when needed; shallow is fine)
 | what | where | pin |

@@ -8,6 +8,8 @@
 # EMU_RECORD=40: record the first 40 s of the display to build/emu-run.mp4 (640x480, H.264).
 # EMU_AUDIO=1: capture Flycast's sound output (SDL "disk" driver) to build/emu-audio.raw (S16LE stereo
 # 44.1 kHz; renders ROM audio: never commit it); tools/audio/rms_check.py reads it.
+# EMU_FLYCAST_ARGS="-config config:rend.EmulateFramebuffer=yes": extra Flycast options (full framebuffer
+# emulation lets VRAM reads of the displayed frame work, as the album's persistent frame needs).
 # EMU_SHOTS="12 20 30": also capture build/emu-t<sec>.png at those seconds after launch (keeps running
 # until the last one even after the marker).
 set -uo pipefail
@@ -21,7 +23,7 @@ img=$("$ROOT/scripts/ctr.sh" emu-tag)
 docker image inspect "$img" >/dev/null 2>&1 || { echo "emu_smoke: image $img missing (scripts/ctr.sh emu-build)" >&2; exit 2; }
 rm -f "$ROOT"/build/emu-serial.log "$ROOT"/build/emu-shot-*.png "$ROOT"/build/emu-t*.png "$ROOT"/build/emu-audio.raw
 
-docker run --rm -v "$ROOT:/work" -w /work -e HOME=/tmp -e EMU_SHOTS="${EMU_SHOTS:-}" -e EMU_RECORD="${EMU_RECORD:-}" -e EMU_AUDIO="${EMU_AUDIO:-}" --user "$(id -u):$(id -g)" "$img" bash -c '
+docker run --rm -v "$ROOT:/work" -w /work -e HOME=/tmp -e EMU_SHOTS="${EMU_SHOTS:-}" -e EMU_RECORD="${EMU_RECORD:-}" -e EMU_AUDIO="${EMU_AUDIO:-}" -e EMU_FLYCAST_ARGS="${EMU_FLYCAST_ARGS:-}" --user "$(id -u):$(id -g)" "$img" bash -c '
     ulimit -c 0
     cdi=$1 marker=$2 timeout=$3
     log=build/emu-serial.log
@@ -32,7 +34,7 @@ docker run --rm -v "$ROOT:/work" -w /work -e HOME=/tmp -e EMU_SHOTS="${EMU_SHOTS
     fi
     for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
     flycast -config config:Debug.SerialConsoleEnabled=yes -config config:UseReios=yes \
-            -config config:Dynarec.Enabled=yes -config window:fullscreen=no "$cdi" > "$log" 2>&1 &
+            -config config:Dynarec.Enabled=yes -config window:fullscreen=no $EMU_FLYCAST_ARGS "$cdi" > "$log" 2>&1 &
     pid=$!
     if [ -n "$EMU_RECORD" ]; then
         rm -f build/emu-run.mp4

@@ -51,12 +51,33 @@ void gpvr_fog_color(uint32_t argb);
 #endif
 /* One closed volume: n triangles, 9 floats each (x, y, z per corner; screen pixels, z = 1/w). */
 void gpvr_mod_volume(const float *tris, int n);
+extern int gpvr_mod_off;   /* debug toggle: headers never get the modifier bit */
 /* Cheap-shadow intensity inside volumes (1 = no change, 0 = black); applied at frame end. */
 void gpvr_shadow_scale(float scale);
 /* Same, from ready PVR vertices (flags are set here). */
 void gpvr_tri_pv(const pvr_vertex_t *a, const pvr_vertex_t *b, const pvr_vertex_t *c);
 
-typedef struct { uint32_t tris, state_changes, tex_uploads, tex_hits, overflow, resets; } gpvr_stats_t;
+/* Frozen frame (patches/026): copy the last finished frame's lists (returns 0 if out of memory or not
+   supported), write that copy at the start of the current frame, free it. Direct-emit builds only. */
+int gpvr_freeze_capture(void);
+void gpvr_freeze_replay(void);
+void gpvr_freeze_release(void);
+
+/* Persistent frame buffer (patches/028): a PERSIST_W x PERSIST_H RGB565 non-twiddled texture holding the
+   last finished frame (640x480 in its top-left). begin allocates it (NULL if VRAM is short), capture copies
+   the front buffer into it (call between scenes), end frees it. */
+#define PERSIST_W 1024
+#define PERSIST_H 512
+pvr_ptr_t gpvr_persist_begin(void);
+typedef struct { int16_t x0, y0, x1, y1, tex; } gpvr_rect_t;
+void gpvr_persist_capture(const gpvr_rect_t *r, int n);   /* n <= 0: whole screen */
+int gpvr_list_rects(int list, size_t skip, gpvr_rect_t *r, int n, int max, gpvr_rect_t *u);
+void gpvr_persist_forget(void);   /* textured strips may have been drawn over: copy them again */
+void gpvr_persist_end(void);
+size_t gpvr_list_bytes(int list);   /* bytes written to a list this frame */
+uint32_t gpvr_list_hash(int list);  /* hash of a list's headers and vertex positions this frame */
+
+typedef struct { uint32_t tris, state_changes, tex_uploads, tex_hits, overflow, resets, opb_oom, ta_ovf; } gpvr_stats_t;
 extern gpvr_stats_t gpvr_stats;
 
 /* docs/fps-plan.md change 1: direct emit into this frame's half of the list's DMA vertex buffer, one

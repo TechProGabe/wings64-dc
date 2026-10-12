@@ -198,3 +198,34 @@
   write it); post-scene no-Z layers go to TR.
 - `_uvDebugPrintf` is empty in the retail game: patches/024 forwards it (`uv:` lines). Fresh saves log
   "file_load: checksum failure" once; that is the game initialising the EEPROM files, not a bug.
+
+## Paid for in visual pass 2 (2026-10-12)
+- **The N64 frame buffer persists; the PVR's does not.** Code that draws once and relies on it: screen fades
+  (func_8032D51C after uvCopyFrameBuf), the photo album (thumbnails drawn once, then only text). Fades replay the
+  last frame's lists (patches/026); the album reads the front buffer back (patches/028).
+- **SUBSCREEN (10..310 x 8..222) frames 3D views and fades.** With the port's unscissored 3D, any quad sized to
+  SUBSCREEN leaves a border of scene: stretch it (overlay_full). Its edges land at 18.0x px, not exactly 18.
+  The title's picture is composed inside SUBSCREEN too: the title maps SUBSCREEN to the screen (TITLE_FIT).
+- **The game resets the scissor to full screen after setting a small one** (uvGfx_80222A98 in uvChan_80204FE4);
+  the N64 RSP clips to the viewport. Clip to small viewports too, or thumbnails spread over the screen.
+- **Coplanar model layers rely on RDP depth ties going to the later draw** (landing pad bullseye on its pad).
+  Under PVR GEQUAL on 1/w from different triangles they stripe; a per-state draw-order bias fixes it.
+- **TEXEL0*TEXEL1 with one texture at two scales** (the sea) is periodic: bake the product, do not drop TEXEL1.
+- `uvVtx` HUD quads in ortho can sit on the near plane and go through the clipper, not the fast path.
+- autoplay: menus move with the analog stick (`v`/`^`), not the D-pad; Z is the camera shutter in flight.
+- **KOS PVR OPB defaults are too small for per-triangle strips.** Every triangle is its own strip, so it takes a
+  pointer in every tile it touches; bins of 16 with 3 overflow sets ran out every other frame on hardware (the TA
+  silently drops the rest of the list). Flycast never reports it: count ASIC_EVT_PVR_OPB_OUTOFMEM on hardware.
+- **VRAM readback through P2 is ~5.6 MB/s** (109 ms for a 640x480 RGB565 frame). Read the cached P1 alias with
+  dcache_inval_range per row, and never re-capture a frame that only redrew itself (feedback blurs on hardware).
+- **PVR vertex depth is also the perspective divisor.** Giving a 3D polygon one constant depth (painter order)
+  makes its texture and shading affine; scale the vertices' 1/w by a common factor instead (layer_depth).
+- **Flycast drops very small depths.** Layers at 1e-10 rendered on hardware but were invisible in Flycast (black
+  sky and sea in every gate run until 2026-10-12); keep painter depths at 1e-8 or above.
+- **KOS sets the render scaler to 0x401 on composite/S-video** (vertical smoothing, 1/1024 shrink as tiles are
+  written). Anything that reads the frame buffer back and draws it again compounds it: set 0x400 for that time.
+  Flycast ignores the scaler. Do not hold 0x400 for long on 480i (hard line flicker), and never restore SCALER_CFG
+  from a read of it (hardware run 8). Any run-time SCALER_CFG write hung the PVR (run 9, even 0x400 after
+  pvr_wait_render_done): leave the scaler to KOS and limit read-backs to the rectangles that changed.
+- **Fast3D clips at the far plane** (z <= w), not only near and x/y. PW64's sea and far-ocean strip reach 4-8x past
+  the far plane; without far clipping the sea runs to the horizon (hardware run 8: "white line" under the haze band).

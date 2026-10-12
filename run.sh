@@ -22,7 +22,8 @@ cmd_disc() { ## build/wings64.cdi (padding on, CD-R); --emu: wings64-emu.cdi (-N
 cmd_hwdisc() { ## hardware-test CD-R images (build/wings64.cdi + -dd): FPS monitor, SD card log, SD profiler
     # Not for Flycast: the SD probe stalls its main thread (kb/traps.md). The settings menu still switches both.
     # DB_PROF: PC-sampling profile to the card on L+R+Start, and once 240 s in (src/dc/prof.c).
-    EXTRA_CFLAGS="-DWINGS64_FPS_DEFAULT=1 -DDB_LOG_SD=1 -DDB_PROF=1 -DDB_PROF_AUTO_S=240 ${EXTRA_CFLAGS:-}" cmd_build
+    # DB_GFX_TOGGLES: hold L+R + D-pad/A to switch graphics suspects off live (src/dc/gfx/gfx_f3d.c).
+    EXTRA_CFLAGS="-DWINGS64_FPS_DEFAULT=1 -DDB_LOG_SD=1 -DDB_PROF=1 -DDB_PROF_AUTO_S=240 -DDB_GFX_TOGGLES=1 ${EXTRA_CFLAGS:-}" cmd_build
     $CTR run scripts/make_cdi.sh
     $CTR run scripts/make_cdi.sh --data-data
     scripts/run_hw.sh

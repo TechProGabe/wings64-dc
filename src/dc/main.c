@@ -299,6 +299,15 @@ int main(int argc, char **argv) {
                     (unsigned long)(timer_ms_gettime64() - ta), aok ? "" : "  FAILED (silent)");
     }
 #endif
+#ifndef WINGS64_CD_SPINDOWN
+#define WINGS64_CD_SPINDOWN 1
+#endif
+#if WINGS64_CD_SPINDOWN
+    /* Everything the game reads is resident now (romfs in RAM, the audio pool in AICA RAM): stop the disc so
+       the drive does not spin flat out for the whole session (hardware run 6: loud, strained drive). A later
+       read spins it up again. Kill switch -DWINGS64_CD_SPINDOWN=0. */
+    if (!strcmp(root, "/cd")) db_log("cd: spin down %s\n", cdrom_exec_cmd(CMD_STOP, NULL) == ERR_OK ? "ok" : "failed");
+#endif
     crc = romfs_crc32();
     if (meta.valid) {
         int crc_ok = crc == meta.crc32 && romfs_size == meta.size;

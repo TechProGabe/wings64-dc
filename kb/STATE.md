@@ -1,81 +1,78 @@
 # STATE — current numbers and the ranked queue
 
-Updated 2026-10-11 (M4 done; two hardware runs; frame-rate pass: Flycast ~55-57 fps everywhere after
-patches/023; next: confirm on hardware, then the visual bugs).
+Updated 2026-10-12 (M4 done; visual passes 1-2 confirmed on hardware through run 11: water, horizon, landing target,
+fades, title, photo album all good; the album menu is slow but accepted; next: queue below).
 
 ## Where things stand
 | metric | value | evidence |
 |---|---|---|
-| milestone | **M4 done** (emulator gate + 10-min soak); first hardware runs 2026-10-11 (boots, audio good, SD log works) | state-log 2026-10-11 |
-| hardware frame rate (before the fps pass) | flight 23-25, menus 13-19, title ~20, results 34-38 fps; PVR wait 7 us, so CPU-bound | hw SD logs, state-log |
-| hardware DL interpret (before the fps pass, median) | flight 25-27 ms (max 75), file menu 43-45, class select 41-43, title 30-32 | `gfx: wait/dl/finish` |
-| Flycast frame rate (after the fps pass) | title 57, menus 54-56, flight 56, results 58 fps (was 22-33); DL flight 9.9 ms, menus 12.0-12.3, title 11.4 | gate + `scripts/gfxstat.sh`, build 508c460+023 |
-| Flycast CPU split (flight, after 023) | scheduler/interpreter 69%, game logic 2%, idle spin 0% (was 55-62%) | `cpu:` log lines |
-| menu flow (Flycast gate) | Rocket Belt flight reached at 50 s (was 108 s): load stalls shrank with patch 023 | `state:` lines |
-| game speed | wall-clock based: Rocket Belt Beginner flight 19.75 s at 57 fps vs 21 s at 32 fps | `state:` lines |
-| audio | AICA driver (src/dc/audio), whole pool resident (1,860,032 of 1,900,544 B), reverb off (DIVERGES); hardware 22.3-22.5 kHz, 0 misses, "sounds really good" | docs/audio-design.md, hw log |
-| SD log on hardware | works with the backported KOS 1c6398f SD stack (src/dc/kos_sd); 8.3 names WINGS64/LOGNNN.TXT; state under the FPS counter | state-log 2026-10-11 |
-| hardware tools | `./run.sh hwdisc` (FPS monitor + SD log + DB_PROF on), profiler dumps per game state and on L+R+Start, `tools/prof/decode_prof.py`, `scripts/gfxstat.sh` | docs/testing.md |
-| last hardware disc | NAS wings64-dc/wings64-dc-20261011e-shadows-splash.cdi (+ -dd, .elf; 123d29e-1012-0123: shadow modifier volumes, draw order, splash, stall watchdog, uv: diagnostics; FPS, SD log, profiler on); not yet run on hardware | NAS .src.json |
+| milestone | **M4 done** (emulator gate + 10-min soak); hardware runs 1-11 (2026-10-11/12) | state-log |
+| hardware frame rate (latest) | flight 45-51 fps (Rocket Belt Beginner; a hang glider test 36), title 37-38, results 33-62, album idle ~60 (DL 0.4 ms) | LOG005, LOG009 |
+| hardware frame rate (before the fps pass) | flight 23-25, menus 13-19, title ~20, results 34-38 fps; CPU-bound | LOG000-001 |
+| Flycast frame rate | title 57, menus 54-56, flight 56, results 58 fps | gate + `scripts/gfxstat.sh` |
+| audio | AICA driver (src/dc/audio), whole pool resident (1,860,032 of 1,900,544 B), reverb off (DIVERGES); hardware 22.3-22.5 kHz, 0 misses, "sounds really good" | docs/audio-design.md |
+| SD log on hardware | backported KOS 1c6398f SD stack (src/dc/kos_sd); WINGS64/LOGNNN.TXT + RECEIPT.TXT | docs/testing.md |
+| hardware tools | `./run.sh hwdisc` (FPS monitor, SD log, DB_PROF, L+R graphics toggles), `tools/prof/decode_prof.py`, `scripts/gfxstat.sh` | docs/testing.md |
+| last hardware disc | NAS wings64-dc/wings64-dc-20261012g-album-text.cdi (+ -dd, .elf; 6289338d-1012-2237): run 11, "it works" | NAS .src.json |
+| boot | loads 5.32 MiB + AICA pool, then spins the drive down (`cd: spin down ok`); maintainer: "loading is much better" | LOG005 |
 | toolchain | image `wings64-dc:ce773e5503b9`: GCC 14.3.0, KOS v2.2.2 `c23410b` (-m4-single-only), mkdcdisc v0.0.4 | `docker/pins.env` |
-| decomp pin | `1a8558f`, **25 patches** (all `WINGS64_DC`-guarded; 022 audio task, 023 idle spin, 024 game diagnostics to log, 025 port splash) | `patches/README.md` |
-| build | decomp at -O2 (WINGS64_DECOMP_O2), text 947,540 B; purity OK (184 decomp TUs) | `kos-size`, `make purity` |
+| decomp pin | `1a8558f`, **28 patches** (all `WINGS64_DC`-guarded; 026 fade frozen frame, 027 debug look-at-pad camera, 028 album persistent frame) | `patches/README.md` |
+| I-cache | `.text.hot.gfx` 6,616 B (must stay well under 8 KB: 8.5 KB halved flight speed on hardware, run 6) | `build/wings64.map` |
 | ROM fs slice | 5,582,256 B, crc32 `DAFCC147`, 1272 UV files | `tools/rom/slice_fs.py` |
-| boot load (emulator) | 5.32 MiB in ~2.9 s + AICA pool ~2 s | serial log |
 
 ## Frame-rate pass (docs/fps-plan.md; every change has a kill switch, default on)
-| change | switch | Flycast effect |
+| change | switch | effect |
 |---|---|---|
-| direct vertex emit into the DMA buffer | WINGS64_DIRECT_EMIT | title 28.7 -> 25.1 ms, menus 28.3 -> 25.3 |
-| outcodes, lazy XMTRX | WINGS64_OUTCODES, WINGS64_MVP_LAZY | flight 19.9 -> 18.3 |
-| per-frame texture memo | WINGS64_TEX_MEMO | flight 18.3 -> 17.6 |
-| rect colour cache, reciprocal UVs | WINGS64_RECT_FIT | pilot select 5.1 -> 3.5, results 10.4 -> 8.0 |
-| fsqrt sqrtf (bit-exact vs newlib) | WINGS64_FSQRT | profile item, hardware gain |
-| I-cache hot section (5,184 B contiguous) | WINGS64_HOT_LAYOUT | title 23.1 -> 19.8; cache effect hardware-only |
-| decomp -O2 | WINGS64_DECOMP_O2 | small in Flycast |
-| fast texture conversion (Haiku agent) | WINGS64_FAST_TEXCONV | load spikes 501 -> 27 ms |
-| **kernel idle spin blocks (patches/023)** | patch (N64 build unchanged) | **fps ~31 -> ~56; DL wall = CPU** |
+| direct vertex emit into the DMA buffer | WINGS64_DIRECT_EMIT | Flycast title 28.7 -> 25.1 ms |
+| outcodes, lazy XMTRX | WINGS64_OUTCODES, WINGS64_MVP_LAZY | Flycast flight 19.9 -> 18.3 |
+| per-frame texture memo | WINGS64_TEX_MEMO | Flycast flight 18.3 -> 17.6 |
+| rect colour cache, reciprocal UVs | WINGS64_RECT_FIT | pilot select 5.1 -> 3.5 ms |
+| fsqrt sqrtf (bit-exact vs newlib) | WINGS64_FSQRT | profile item |
+| I-cache hot section, per-frame extras outlined COLD | WINGS64_HOT_LAYOUT | hardware: 8.5 KB hot -> 38 fps flight, 6.5 KB -> 51 |
+| decomp -O2 | WINGS64_DECOMP_O2 | small |
+| fast texture conversion | WINGS64_FAST_TEXCONV | load spikes 501 -> 27 ms |
+| **kernel idle spin blocks (patches/023)** | patch | **fps ~31 -> ~56 (Flycast); hardware flight 23-25 -> 45-53** |
 
-## Hardware run 3 (2026-10-11, disc 462f919-1011-2314, LOG002.TXT, 386 s)
-- Maintainer: "fps is great". **Hardware frame rate after the fps pass: ~49 fps Beginner flight (20-140 s), ~42 fps
-  Class A flight (280-360 s)** (gfx tasks per second), DL wall median 14.2 ms (was 25-27 ms). Beginner HG/RB/GC + one Class A test played; then **hang entering the Class A
-  Gyrocopter test overview** (Crescent Island, first load of that island): gfx task count frozen at 17456 from
-  381.5 s, VI and audio alive; `cpu:` audio thread 39% (normally 1-2%), app 28%, scheduler 9%, audio rate halved.
-  Not reproduced in Flycast from a fresh boot (forced Class A gyro reaches overview and flight). Next disc logs
-  `stall:` lines (thread PC/PR/wait + stack text words, profiler dump at 10 s), `uv:` game diagnostics
-  (patches/024) and `pvr: wait ready timed out`.
+## Graphics fixes (kill switch each; status from the maintainer's hardware runs)
+| bug | cause | fix (switch) | hardware |
+|---|---|---|---|
+| column / trapezoid under vehicles | shadow volume pass 1 (cimg == zimg) dropped, pass 2 painted the volume | PVR cheap-shadow modifier volumes, OP/PT headers only (WINGS64_SHADOW_MOD) | ok (run 4) |
+| horizon band through glider/HUD, pilots missing on pilot select | no-Z layers drawn before the scene land on top (PVR list order) | painter depth for pre-scene no-Z layers, post-scene no-Z to TR (WINGS64_LAYER_Z) | ok |
+| sea affine / unreadable when flying over it | the painter layer gave the sea (a 3D plane) one constant depth; the PVR perspective-corrects with vertex depth | per-polygon painter depth keeping 1/w ratios, floors stacked per layer, floor 1e-8 (WINGS64_LAYER_Z; layer_depth) | ok (run 8) |
+| sea blotchy up close | TEXEL0*TEXEL1 (one I4 wave texture at two scales) drawn as TEXEL0 | product baked 128x128 (WINGS64_TEX_PRODUCT) | ok |
+| white line at the horizon, sea to the horizon | no far-plane clipping; Fast3D clips at z <= w, so on the N64 the sea stops short of the horizon | far plane in outcodes and clipper (WINGS64_FAR_CLIP) | "perfect" (run 9) |
+| landing target cut off / striped | coplanar pad layers tie under GEQUAL 1/w; the RDP lets later draws win | per-state draw-order depth bias <= 0.4 % (WINGS64_Z_TIEBREAK); debug camera patches/027 | ok (run 6) |
+| crash / Birdman white fade leaves a scene border | fades span SUBSCREEN; the port draws 3D unscissored | no-Z untextured quads over SUBSCREEN stretched to the screen (WINGS64_OVERLAY_FULL) | ok (run 7) |
+| fade-out runs over black | func_8032D51C fades over the copied N64 frame buffer | last frame's lists replayed under the fade (patches/026, WINGS64_FB_FREEZE) | ok |
+| title picture cut / inset | title composed inside SUBSCREEN | SUBSCREEN mapped to the screen inset 12 px, black outside (WINGS64_TITLE_FIT, TITLE_MARGIN) | "looks good" (run 7) |
+| photo album black | the album draws each photo once and relies on the N64 frame buffer persisting | front-buffer readback as first layer (patches/028, WINGS64_FB_PERSIST) + clip to small scissor/viewport (WINGS64_SCISSOR) | works (run 11) |
+| album blur / shrink / flicker / hangs | KOS scaler 0x401 (composite) smooths and shrinks every frame-buffer write; whole-screen re-captures compounded it; run-time SCALER_CFG writes hung the PVR | captures copy only rectangles drawn in the last two frames; text strips once per layout; cursor bars apart; TR x/y hash policy; quarter-texel sampling; scaler untouched | ok (run 11); menu slow, accepted |
+| drive loud / strained | disc spun flat out all session | CMD_STOP after the boot loads (WINGS64_CD_SPINDOWN) | ok (run 7) |
+| hardware bisect aid | | hwdisc: hold L+R + Up/Down/Left/Right/A = modifier/layer/product/tiebreak/dxt off (DB_GFX_TOGGLES) | used in run 7 |
 
-## Visual fixes (Flycast, 2026-10-11; hardware unconfirmed)
-| bug | cause | fix (kill switch) |
+## Hardware runs (details in state-log.md)
+| run | disc | outcome |
 |---|---|---|
-| column under Rocket Belt pilot, trapezoid under hang glider | shadow volume pass 1 (cimg == zimg) dropped, pass 2 painted the volume | volume -> PVR cheap-shadow OP modifier volume, pass 2 skipped (WINGS64_SHADOW_MOD) |
-| horizon line through glider/terrain/HUD | no-Z TR haze quad drawn before the scene lands on top (PVR list order) | painter depth for pre-scene no-Z layers, post-scene no-Z to TR (WINGS64_LAYER_Z) |
-| pilots missing on pilot select | same list-order cause | same (WINGS64_LAYER_Z) |
-| striped landing target (unverified) | suspected LOADBLOCK dxt not sized for the tile line | exact RDP odd-line swap (WINGS64_DXT_EXACT) |
-
-## Boot and splash (2026-10-11)
-Boot screen is a quiet "Loading" + progress bar (DB_BOOT_VERBOSE=1 for the old check text; failures always red).
-Splash `src/dc/splash.c` (patches/025, WINGS64_SPLASH): "TECHPROGABE presents" on the Option-screen sky, font 6
-bold, SFX_QUICK_SWISH (WINGS64_SPLASH_SFX), ~2.4 s in Flycast (frame-counted), A/Start skips. Gate passes with it.
-
-## Hardware run 4 (2026-10-11, disc 123d29e-1012-0123, no SD card)
-Maintainer: the visual fixes hold; only two issues left, both logged in the queue below (#2, #3).
+| 1-2 | 0a43221 | boots, audio good, SD log; 15-25 fps |
+| 3 | 462f919-1011-2314 | ~49 fps flight after the fps pass; Class A Gyrocopter overview hang (not reproduced since) |
+| 4 | 123d29e-1012-0123 | visual fixes hold; water wrong, pop-in on fast turns |
+| 5 | 123d29e (LOG003) | flight 47-56 fps, no hang |
+| 6 | 6289338d-1012-1740 | target fixed; water, title overshoot, drive noise, album slow/blurry; I-cache regression 38 fps |
+| 7 | 6289338d-1012-1816 | loading, title, target, fades good; water = painter layer (toggle bisect); album blur/shrink |
+| 8 | 6289338d-1012-2102 | water better, horizon white line; album flicker, hang on exit (scaler restore) |
+| 9 | 6289338d-1012-2148 | horizon perfect; album hang (scaler write) |
+| 10 | 6289338d-1012-2216 | no crash; album still blurs on cursor moves (text union) |
+| 11 | 6289338d-1012-2237 | album works; menu laggy, accepted |
 
 ## Ranked queue
-1. **Confirm the fps pass on hardware** (`./run.sh hwdisc`, no burn scheduled by the maintainer): SD log
-   `gfx:` + `cpu:` lines per state, PROF dumps. Hypotheses: hardware DL ~10-15 ms flight, 30 fps locked or
-   better; menus no longer 13-19 fps; menu loads much shorter. Watch for anything frame-count based that
-   now runs fast above 30 fps (Flycast showed none in flight).
-2. **BUG: water looks wrong on hardware** (maintainer, run 4; it looked right on disc 462f919). Regression from
-   a84f8b9. Suspects in order: WINGS64_LAYER_Z (water/sea drawn without a depth test before the scene would now
-   get a painter depth and GEQUAL, or move to TR after it), WINGS64_SHADOW_MOD (modifier flag on every
-   depth-tested header), WINGS64_DXT_EXACT (water texture loaded with a dxt that differs from the tile line).
-   Bisect with the three kill switches on one disc each; compare against a Flycast shot of the same view.
-3. **BUG: pop-in on fast left/right turns** (maintainer, run 4, "sometimes"). Not checked whether it predates
-   a84f8b9. Suspects: decomp terrain/object culling running a frame behind the camera (patches/020 touches the
-   ground-view arrays), WINGS64_OUTCODES trivial reject, or WINGS64_TEX_MEMO serving a stale texture for a frame.
-4. **Class A Gyrocopter overview hang** (hardware run 3): read the `stall:` lines from the next hardware log.
-   Visual fixes above need a hardware look; landing target and title pilot overlay still to confirm.
-5. Remaining menu load stalls: re-measure after 023 (Flycast: much shorter), then profile the app thread.
+1. **Album menu speed** (run 11, accepted for now): the thumbnail fill-in phase runs at 2-4 fps (the game's own 0.1 s
+   wait per slot, 3D renders, rectangle captures up to 151 ms once). Ideas in kb/levers.md L16.
+2. **Pop-in on fast turns** (run 4, low priority): not reported in runs 7-11. `ta opb-oom` rises exactly 15 per 30
+   frames in every state, even the near-empty album, so it is not list exhaustion; identify the event first (L17).
+   Suspects otherwise: decomp culling a frame behind (patches/020), WINGS64_OUTCODES, WINGS64_TEX_MEMO.
+3. **Title fps** 37-38 (run 5: 46): title DL 17 ms on hardware; check the title-fit border/overlay cost.
+4. **Class A Gyrocopter overview hang** (run 3): never reproduced; watch `stall:` lines.
+5. "uv: RSP timeout on g ... Recovered from a bad display list" at menu/level loads (game watchdog on long loads; harmless so far).
 6. Audio fidelity (M5): reverb via AICA DSP, sub-frame parameter timing, PCM8 for waves that sound bad.
-7. M5 parity (all vehicles/levels), M6 (fps on hardware), M7 release.
+7. Later levers (kb/levers.md): LTO (L14), profile-guided hot/cold layout (L15).
+8. M5 parity (all vehicles/levels), M6 (fps on hardware), M7 release.

@@ -16,6 +16,7 @@
 
 #include <kos.h>
 #include <string.h>
+#include <stdio.h>
 #include <sh4zam/shz_sh4zam.h>
 
 /* DB_PERF-style phase accounting (microseconds, emulated or real). */
@@ -31,6 +32,20 @@ static uint64_t sT_vtx, sT_state, sT_conv, sT_emit, sT_other, sT_fit, sT_tex, sT
 #define TNOW() ((uint64_t)0)
 #endif
 
+/* Hardware bisect toggles (DB_GFX_TOGGLES, hwdisc builds): hold L+R and tap a D-pad direction or A to switch
+   a suspect off/on live; the state is drawn under the FPS counter (wings64_gfx_dbg_text) and logged. Bits set =
+   feature OFF. Only for finding hardware-only bugs (the sea, hardware run 6); release builds compile it out. */
+#ifndef DB_GFX_TOGGLES
+#define DB_GFX_TOGGLES 0
+#endif
+enum { DBG_MOD = 1, DBG_LAYER = 2, DBG_PROD = 4, DBG_ZTB = 8, DBG_DXT = 16 };
+#if DB_GFX_TOGGLES
+static unsigned sDbgOff;
+#define DBG_OFF(bit) (sDbgOff & (bit))
+#else
+#define DBG_OFF(bit) 0
+#endif
+
 #if DB_GFX_TRACE
 static int sTrace;
 static uint32_t sListTris[3], sRejTrivial, sRejCull, sClipped, sVtxLoads;
@@ -40,6 +55,15 @@ static float sMinW, sMaxW;
 #define TRACE(...) do { if (sTrace) db_log(__VA_ARGS__); } while (0)
 #else
 #define TRACE(...) ((void)0)
+#endif
+
+/* Far-plane clipping. The N64's Fast3D clips triangles at the projection's far plane (z <= w); PW64's sea is a
+   plane reaching ~9,000 units out under a far plane at ~2,100, so on the N64 it stops short of the horizon and
+   the sky dome shows below it. Without the far plane the port drew the sea right up to the horizon, under the
+   game's thin haze band (hardware run 8: "a white line"; maintainer N64 photo).
+   Kill switch -DWINGS64_FAR_CLIP=0. */
+#ifndef WINGS64_FAR_CLIP
+#define WINGS64_FAR_CLIP 1
 #endif
 
 #define SCALE 2.0f                /* N64 320x240 -> 640x480 */
@@ -85,7 +109,7 @@ typedef struct {
     float r, g, b, a;             /* shade 0..1 (a = vertex alpha) */
     float fog;                    /* 0..255 */
     /* --- not interpolated by the clipper (see lerp_vtx) --- */
-    uint32_t oc;                  /* outcode (do_vtx): bits 0-4 beyond x+ x- y+ y- near, bit 5 needs clipping */
+    uint32_t oc;                  /* outcode (do_vtx): bits 0-4 beyond x+ x- y+ y- near, bit 5 needs clipping, bit 6 beyond far */
     uint32_t pv_epoch;            /* draw-state epoch pv was computed for (0 = stale) */
     pvr_vertex_t pv;              /* final PVR vertex for the current state */
 } vtx_t;
@@ -237,6 +261,7 @@ static HOT void do_vtx(uint32_t w0, uint32_t w1) {
             if (c.y < -c.w) o |= 8;
             if (c.z < -c.w) o |= 16;
             if (c.z + c.w < 0.0f || c.x > gw || c.x < -gw || c.y > gw || c.y < -gw) o |= 32;
+            if (WINGS64_FAR_CLIP && c.z > c.w) o |= 64 | 32;
             v->oc = o;
         }
 #endif
@@ -530,7 +555,7 @@ static COLD gpvr_tex_t *texture_for_tile(int tidx) {
     shz_memcpy(raw, ram(ld->addr), (bytes + 7) & ~7u);
     if (ld->dxt == 0) texconv_deswizzle(raw, line, bytes / line);  /* pre-swizzled data (gfx.md) */
 #if WINGS64_DXT_EXACT
-    else if (t->siz != 3 && ((uint32_t)ld->dxt * (line / 8) != 2048u))   /* dxt not sized for this line */
+    else if (!DBG_OFF(DBG_DXT) && t->siz != 3 && ((uint32_t)ld->dxt * (line / 8) != 2048u))   /* dxt not sized for this line */
         texconv_deswizzle_dxt(raw, line, bytes / line, ld->dxt);
 #endif
     pf = texconv_convert(raw, line, w, h, (n64_fmt_t)t->fmt, (n64_siz_t)t->siz, 1, conv, w, h);
@@ -570,6 +595,72 @@ static float shift_scale(int sh) {
     return (float)(1 << (16 - sh));
 }
 
+/* Two-texture product. The sea's combiner is TEXEL0 * TEXEL1 * SHADE with both tiles on the same TMEM
+   texture (a 64x64 I4 wave pattern) at two scales: tile 0 at shift 1, tile 1 at shift 0, no offsets, wrap.
+   With one texture unit the port drew TEXEL1 = TEXEL0, which lost the fine layer (a blotchy sea up close).
+   The product of the two layers is periodic, so it is baked into one texture (period = coarse period) in the
+   fine tile's coordinate frame and the combiner keeps treating it as one texel (T*T ~ T in eval).
+   Only this shape is handled: same texture, wrap, zero offsets, square shift ratio 2 or 4, ARGB4444.
+   Kill switch -DWINGS64_TEX_PRODUCT=0. */
+#ifndef WINGS64_TEX_PRODUCT
+#define WINGS64_TEX_PRODUCT 1
+#endif
+#if WINGS64_TEX_PRODUCT
+
+static int cc_is_t0_times_t1(void) {
+    /* 2-cycle, cycle 0 rgb and alpha both (TEXEL0 - 0) * TEXEL1 + 0 */
+    uint32_t w0 = R.cc0, w1 = R.cc1;
+    return ((w0 >> 20) & 0xF) == 1 && ((w1 >> 28) & 0xF) >= 6 && ((w0 >> 15) & 0x1F) == 2 && ((w1 >> 15) & 7) == 7 &&
+           ((w0 >> 12) & 7) == 1 && ((w1 >> 12) & 7) == 7 && ((w0 >> 9) & 7) == 2 && ((w1 >> 9) & 7) == 7;
+}
+
+static COLD gpvr_tex_t *texture_product(int tidx, int *fine_idx) {
+    static uint8_t raw[4096] __attribute__((aligned(32)));
+    static uint16_t base[64 * 64] __attribute__((aligned(32)));
+    static uint16_t prod[128 * 128] __attribute__((aligned(32)));
+    tile_t *a = &R.tile[tidx], *b = &R.tile[(tidx + 1) & 7], *coarse, *fine;
+    tmemload_t *ld = &R.loads[(a->tmem >> 3) & 63];
+    unsigned p, line, bytes, r, n, d;
+    uint32_t fmtkey, sample;
+    gpvr_tex_t *gt;
+    if (a->tmem != b->tmem || a->fmt != b->fmt || a->siz != b->siz || a->line != b->line || !ld->valid || a->line == 0) return NULL;
+    if (a->masks != a->maskt || b->masks != a->masks || b->maskt != a->masks || a->masks < 3 || a->masks > 6) return NULL;
+    if ((a->cms | a->cmt | b->cms | b->cmt) || (a->uls | a->ult | b->uls | b->ult)) return NULL;
+    if (a->shifts != a->shiftt || b->shifts != b->shiftt || a->shifts > 10 || b->shifts > 10) return NULL;
+    coarse = a->shifts > b->shifts ? a : b; fine = coarse == a ? b : a;
+    d = coarse->shifts - fine->shifts;
+    if (d < 1 || d > 2) return NULL;
+    r = 1u << d; p = 1u << a->masks; n = p * r;
+    if (n > 128) return NULL;
+    line = a->line * 8;
+    bytes = line * p;
+    if (a->siz == 3 || bytes > sizeof raw || bytes > ld->bytes) return NULL;
+    fmtkey = (a->fmt | a->siz << 3 | (p - 1) << 5 | (uint32_t)(line & 0xFF) << 24 | d << 16) ^ 0xA5C3E1F7u;
+    sample = sample_hash(ram(ld->addr), bytes);
+    gt = gpvr_tex_lookup(ld->addr, fmtkey, sample);
+    if (!gt) {
+        shz_memcpy(raw, ram(ld->addr), (bytes + 7) & ~7u);
+        if (ld->dxt == 0) texconv_deswizzle(raw, line, p);
+        if (texconv_convert(raw, line, p, p, (n64_fmt_t)a->fmt, (n64_siz_t)a->siz, 1, base, p, p) != PVRFMT_ARGB4444) return NULL;
+        for (unsigned y = 0; y < n; y++) {
+            const uint16_t *rc = base + ((y >> d) & (p - 1)) * p, *rf = base + (y & (p - 1)) * p;
+            uint16_t *o = prod + y * n;
+            for (unsigned x = 0; x < n; x++) {
+                uint32_t c = rc[(x >> d) & (p - 1)], f = rf[x & (p - 1)], v = 0;
+                for (int sh = 0; sh < 16; sh += 4) v |= ((((c >> sh) & 15) * ((f >> sh) & 15) + 7) / 15) << sh;
+                o[x] = (uint16_t)v;
+            }
+        }
+        gt = gpvr_tex_insert(ld->addr, fmtkey, sample, prod, n, n, PVR_TXRFMT_ARGB4444);
+        if (!gt) return NULL;
+        db_log("gfx: texel product baked %ux%u (layers 1:%u)\n", n, n, r);
+    }
+    sTexEffW = sTexEffH = n;
+    *fine_idx = fine == a ? tidx : (tidx + 1) & 7;
+    return gt;
+}
+#endif
+
 /* ------------------------------------------------------------- draw state */
 
 /* Cross-list draw order. The N64 draws strictly in submission order; the PVR renders all OP, then PT, then
@@ -580,22 +671,62 @@ static float shift_scale(int sh) {
      layers and all 3D geometry (z = 1/w, far larger) cover earlier ones whatever their list;
    - after it (HUD, overlays) depth-ALWAYS layers go to the TR list, which keeps submission order and comes
      after every OP/PT polygon. DIVERGES: z-tested geometry drawn after an overlay ends up under it.
+   The PVR also uses vertex depth for perspective correction, so a painter layer cannot take one constant depth
+   (hardware run 7: the sea, a 3D plane drawn as a background layer, came out affine and unreadable). Each
+   polygon keeps its vertices' 1/w ratios, scaled so its nearest-in-band vertex sits at the layer's floor
+   (layer_depth); the next layer's floor starts just above the highest depth the previous one wrote.
    Kill switch -DWINGS64_LAYER_Z=0. */
 #ifndef WINGS64_LAYER_Z
 #define WINGS64_LAYER_Z 1
 #endif
-#define LAYER_STEP 1e-10f          /* 4000 layers stay under 4e-7; scene 1/w stays above ~5e-5 */
-#define LAYER_MAX 4000
-static float sLayerZ;              /* >0: painter depth of the current background layer */
-static int sLayerN, sSceneZ;       /* layers this frame; a z-tested draw has happened this frame */
+#ifndef LAYER_STEP
+#define LAYER_STEP 1e-8f           /* first layer floor (Flycast hid layers at 1e-10: sky and sea came out black); scene 1/w stays above ~5e-5 */
+#endif
+#define LAYER_GAP 1.001f           /* next floor over the previous layer's top: 4000 flat layers grow 55x */
+#define LAYER_RATIO 4096.0f        /* widest 1/w spread kept exact in one polygon (near/horizon) */
+#define LAYER_TOP 4e-5f            /* no painter depth above this: the scene starts at ~5e-5 */
+static int sPersistFresh __attribute__((unused)), sPrevFrameDrew, sFillSeen;   /* persistent frame: capture policy (gfx_f3d_run) */
+#define CAP_RECTS 32
+static gpvr_rect_t sCapRect[2 * CAP_RECTS];   /* what the last two frames drew (frame_end_extras) */
+static int sCapN;
+static size_t sPersistSkip;               /* OP bytes of the persistent layer itself at the start of the frame */
+static float sLayerZ;              /* >0: painter depth floor of the current background layer */
+static float sLayerHi;             /* highest painter depth written this frame */
+static int sSceneZ;                /* a z-tested draw has happened this frame */
+
+/* Painter depth for one polygon of a background layer: p[i].z holds 1/w on entry (to_pvr). The farthest vertex
+   lands on the layer floor; a polygon spanning more than LAYER_RATIO keeps its near end exact and its far
+   vertices clamp to the floor (horizon side, where the error is smallest on screen). */
+static COLD void layer_depth(pvr_vertex_t *p, int n) {
+    float lo = p[0].z, hi = p[0].z, k, top = sLayerZ * LAYER_RATIO;
+    for (int i = 1; i < n; i++) {
+        if (p[i].z < lo) lo = p[i].z;
+        if (p[i].z > hi) hi = p[i].z;
+    }
+    TRACE("      layer poly n %d iw %.3g..%.3g floor %.3g\n", n, lo, hi, sLayerZ);
+#if DB_GFX_TRACE
+    if (sTrace) for (int i = 0; i < n; i++) db_log("        v%d %.0f,%.0f iw %.3g argb %08lx\n", i, p[i].x, p[i].y, p[i].z, (unsigned long)p[i].argb);
+#endif
+    k = lo > 0.0f ? sLayerZ * shz_invf(lo) : 0.0f;
+    if (top > LAYER_TOP) top = LAYER_TOP;
+    if (hi * k > top) k = top * shz_invf(hi);
+    for (int i = 0; i < n; i++) {
+        float z = p[i].z * k;
+        if (z < sLayerZ) z = sLayerZ;
+        p[i].z = z;
+        if (z > sLayerHi) sLayerHi = z;
+    }
+}
 
 static void layer_fix(gpvr_state_t *st) {
 #if WINGS64_LAYER_Z
     sLayerZ = 0.0f;
+    if (DBG_OFF(DBG_LAYER)) return;
     if (st->depth_cmp != PVR_DEPTHCMP_ALWAYS) { sSceneZ = 1; return; }
     if (!sSceneZ) {
-        if (sLayerN < LAYER_MAX) sLayerN++;
-        sLayerZ = LAYER_STEP * (float)sLayerN;
+        sLayerZ = sLayerHi * LAYER_GAP;
+        if (sLayerZ > LAYER_TOP) sLayerZ = LAYER_TOP;   /* out of room: later layers tie, and GEQUAL keeps draw order */
+        if (sLayerHi < sLayerZ) sLayerHi = sLayerZ;
         st->depth_cmp = PVR_DEPTHCMP_GEQUAL;
         st->depth_write = st->list != GPVR_TR;
     } else if (st->list != GPVR_TR) {
@@ -642,7 +773,15 @@ static OUTLINE int draw_state(int textured_possible, int depth_override_always, 
     cur_tex = NULL;
     if (textured_possible && R.tex_on) {
         tile_t *t = &R.tile[R.tex_tile];
-        { uint64_t t0 = TNOW(); cur_tex = texture_for_tile(R.tex_tile); sT_tex += TNOW() - t0; }
+        { uint64_t t0 = TNOW();
+#if WINGS64_TEX_PRODUCT
+        int fine;
+        cur_tex = NULL;
+        if (cycle == 1 && !DBG_OFF(DBG_PROD) && cc_is_t0_times_t1() && (cur_tex = texture_product(R.tex_tile, &fine)) != NULL) t = &R.tile[fine];
+        if (!cur_tex)
+#endif
+        cur_tex = texture_for_tile(R.tex_tile);
+        sT_tex += TNOW() - t0; }
 #if DB_GFX_TRACE
         if (!cur_tex && sTrace)
             db_log("  texmiss %s tile %d fmt %d siz %d line %d tmem %d s %d-%d t %d-%d mask %d/%d load %d bytes %lu dxt %d cc %08lx:%08lx\n",
@@ -675,6 +814,55 @@ static OUTLINE int draw_state(int textured_possible, int depth_override_always, 
 
 /* --------------------------------------------------------------- triangles */
 
+/* Coplanar draws. The RDP lets a later draw pass an equal depth within its dz tolerance (and ZMODE_DEC
+   within dz), so models layer coplanar parts by draw order: the landing pad draws its bullseye disc on the
+   pad's own plane (LOD0: three opaque states on one plane; LOD1/2: two decal states). On the PVR, 1/w from
+   different triangles rounds either way per pixel and the bullseye came out striped. Every depth-tested draw
+   state gets a depth bias that grows with its order in the frame (2^-16 per state, capped at 256 states =
+   0.4 %), so a later coplanar draw wins as on the RDP. DIVERGES: later-drawn geometry is treated as nearer by up to 0.4 % of its distance.
+   Kill switch -DWINGS64_Z_TIEBREAK=0. */
+#ifndef WINGS64_Z_TIEBREAK
+#define WINGS64_Z_TIEBREAK 1
+#endif
+static float sZBias = 1.0f;        /* depth scale of the current draw state */
+static unsigned sZOrder;           /* depth-tested draw states so far this frame */
+
+/* Output mapping from N64 320x240 pixels to the 640x480 PVR screen: x * sOutSx + sOutOx. Normally x2.
+   Title fit: the title screen frames its picture with SUBSCREEN (10..310 x 8..222); the pilots' group picture
+   ends at its bottom edge, which the N64 hid under the scissored border and the TV's overscan. With the port's
+   unscissored 3D the island showed below a hard cut. DIVERGES: on the title SUBSCREEN is stretched to a 12 px inset, black outside.
+   Kill switch -DWINGS64_TITLE_FIT=0. */
+#ifndef WINGS64_TITLE_FIT
+#define WINGS64_TITLE_FIT 1
+#endif
+static float sOutSx = SCALE, sOutSy = SCALE, sOutOx = 0.0f, sOutOy = 0.0f;
+/* Title fit target: SUBSCREEN maps to the screen inset by this many output pixels, and the border outside it is
+   black as on the N64 (hardware run 6: the full-screen stretch ran past the TV's visible area). */
+#ifndef TITLE_MARGIN
+#define TITLE_MARGIN 12.0f
+#endif
+
+/* Black border outside the title's inset picture, drawn last (TR, no depth test). */
+static COLD void title_border(void) {
+#define M_ TITLE_MARGIN
+    static const float r[4][4] = { { 0, 0, 640, M_ }, { 0, 480 - M_, 640, 480 }, { 0, M_, M_, 480 - M_ }, { 640 - M_, M_, 640, 480 - M_ } };
+#undef M_
+    gpvr_state_t st;
+    memset(&st, 0, sizeof st);
+    st.list = GPVR_TR;
+    st.depth_cmp = PVR_DEPTHCMP_ALWAYS;
+    st.blend_src = PVR_BLEND_ONE;
+    st.blend_dst = PVR_BLEND_ZERO;
+    gpvr_set_state(&st);
+    for (int i = 0; i < 4; i++) {
+        gpvr_vtx_t q[4] = {
+            { r[i][0], r[i][1], 1.0f, 0, 0, 0xFF000000u, 0 }, { r[i][2], r[i][1], 1.0f, 0, 0, 0xFF000000u, 0 },
+            { r[i][0], r[i][3], 1.0f, 0, 0, 0xFF000000u, 0 }, { r[i][2], r[i][3], 1.0f, 0, 0, 0xFF000000u, 0 } };
+        gpvr_tri(&q[0], &q[1], &q[2]);
+        gpvr_tri(&q[1], &q[3], &q[2]);
+    }
+}
+
 static HOT void to_pvr(const vtx_t *v, pvr_vertex_t *o, int textured, int decal) {
     lin_t c[4];
     float iw = shz_invf(v->w);
@@ -689,9 +877,9 @@ static HOT void to_pvr(const vtx_t *v, pvr_vertex_t *o, int textured, int decal)
         combine(v, (R.geom & F3D_G_FOG) != 0, c);
     }
     o->flags = PVR_CMD_VERTEX;
-    o->x = (R.vp_tx + v->x * iw * R.vp_sx) * SCALE;
-    o->y = (R.vp_ty - v->y * iw * R.vp_sy) * SCALE;
-    o->z = sLayerZ > 0.0f ? sLayerZ : decal ? iw * 1.003f : iw;
+    o->x = (R.vp_tx + v->x * iw * R.vp_sx) * sOutSx + sOutOx;
+    o->y = (R.vp_ty - v->y * iw * R.vp_sy) * sOutSy + sOutOy;
+    o->z = sLayerZ > 0.0f ? iw : (decal ? iw * 1.003f : iw) * sZBias;   /* layer: rescaled by layer_depth */
     if (textured) {
         o->u = v->s * cur_u_scale - cur_u_off;   /* ((s * shift) - uls) / w, folded per draw state */
         o->v = v->t * cur_v_scale - cur_v_off;
@@ -711,9 +899,26 @@ static void lerp_vtx(vtx_t *o, const vtx_t *a, const vtx_t *b, float t) {
 
 static void lerp_vtx(vtx_t *o, const vtx_t *a, const vtx_t *b, float t);
 
+static int sStateOverlay;
+static COLD void overlay_full(pvr_vertex_t *const p[], int n);
+
+/* Fast-path triangle of a painter layer: cached vertices are shared, so the layer depth goes on copies. */
+static COLD void layer_tri(const pvr_vertex_t *a, const pvr_vertex_t *b, const pvr_vertex_t *c) {
+    pvr_vertex_t pv[3] = { *a, *b, *c };
+    layer_depth(pv, 3);
+    gpvr_tri_pv(&pv[0], &pv[1], &pv[2]);
+}
+
 static COLD void emit_poly(vtx_t *poly, int n, int textured, int decal) {
     pvr_vertex_t pv[12];
     for (int i = 0; i < n; i++) to_pvr(&poly[i], &pv[i], textured, decal);
+    if (sLayerZ > 0.0f) layer_depth(pv, n);
+    if (sStateOverlay) {
+        /* HUD quads with z on the near plane come through the clipper (overlay_full, below) */
+        pvr_vertex_t *p[12];
+        for (int i = 0; i < n; i++) p[i] = &pv[i];
+        overlay_full(p, n);
+    }
     for (int i = 1; i + 1 < n; i++) gpvr_tri_pv(&pv[0], &pv[i], &pv[i + 1]);
 #if DB_GFX_TRACE
     sListTris[sState.list] += n - 2; sStEmit += n - 2;
@@ -726,8 +931,59 @@ static COLD void emit_poly(vtx_t *poly, int n, int textured, int decal) {
 #endif
 }
 
-/* Sutherland-Hodgman in clip space against near (z + w >= 0) and the x/y guard-band planes; few
-   triangles need it, so it lives out of line. */
+/* Scissor. The port draws 3D views unscissored (the overscan border is drawn over, see overlay_full), but
+   the photo album renders each photo as a small 3D view (80x59 thumbnails, a 200x150 viewer); unclipped,
+   every thumbnail's scene spread over the screen. A scissor or viewport clearly smaller than the SUBSCREEN
+   view (narrower than 280 or shorter than 190 N64 pixels) is honoured: triangles are clipped to it in clip
+   space, rectangles are cut to it. Kill switch -DWINGS64_SCISSOR=0. */
+#ifndef WINGS64_SCISSOR
+#define WINGS64_SCISSOR 1
+#endif
+static int sScOn;                       /* a small clip rectangle is active */
+static float sScX0, sScY0, sScX1, sScY1; /* the clip rectangle, N64 pixels */
+static float sScissor[4] = { 0.0f, 0.0f, 320.0f, 240.0f };   /* last G_SETSCISSOR */
+
+/* The clip rectangle: the scissor if it is small, cut to the viewport if that is small. The game resets the
+   scissor to the full screen (uvGfx_80222A98, its z-buffer clear) after setting a thumbnail's, and the N64
+   RSP clips to the viewport's frustum anyway, so a small viewport alone also clips. */
+static COLD void clip_rect_update(void) {
+    float x0 = sScissor[0], y0 = sScissor[1], x1 = sScissor[2], y1 = sScissor[3];
+    int sc_small = x1 - x0 < 280.0f || y1 - y0 < 190.0f;
+    int vp_small = R.vp_sx < 140.0f || R.vp_sy < 95.0f;
+    if (!sc_small) { x0 = 0.0f; y0 = 0.0f; x1 = 320.0f; y1 = 240.0f; }
+    if (vp_small) {
+        if (R.vp_tx - R.vp_sx > x0) x0 = R.vp_tx - R.vp_sx;
+        if (R.vp_tx + R.vp_sx < x1) x1 = R.vp_tx + R.vp_sx;
+        if (R.vp_ty - R.vp_sy > y0) y0 = R.vp_ty - R.vp_sy;
+        if (R.vp_ty + R.vp_sy < y1) y1 = R.vp_ty + R.vp_sy;
+    }
+    sScX0 = x0; sScY0 = y0; sScX1 = x1; sScY1 = y1;
+    sScOn = WINGS64_SCISSOR && (sc_small || vp_small);
+}
+
+/* Signed distance of a clip-space vertex inside scissor edge `plane` (0 x0, 1 x1, 2 y0, 3 y1; >= 0 inside). */
+static inline float sc_dist(const vtx_t *v, int plane) {
+    switch (plane) {
+    case 0: return v->x * R.vp_sx + v->w * (R.vp_tx - sScX0);
+    case 1: return -v->x * R.vp_sx + v->w * (sScX1 - R.vp_tx);
+    case 2: return -v->y * R.vp_sy + v->w * (R.vp_ty - sScY0);
+    default: return v->y * R.vp_sy + v->w * (sScY1 - R.vp_ty);
+    }
+}
+
+/* -1: the triangle is outside one scissor edge; 1: it crosses an edge (clip it); 0: inside. */
+static COLD int scissor_test(vtx_t *const v[3]) {
+    uint32_t and_m = 15, or_m = 0;
+    for (int i = 0; i < 3; i++) {
+        uint32_t m = 0;
+        for (int pl = 0; pl < 4; pl++) if (sc_dist(v[i], pl) < 0.0f) m |= 1u << pl;
+        and_m &= m; or_m |= m;
+    }
+    return and_m ? -1 : or_m ? 1 : 0;
+}
+
+/* Sutherland-Hodgman in clip space against near (z + w >= 0), the x/y guard-band planes, far (z <= w) and,
+   with a small scissor, its four edges; few triangles need it, so it lives out of line. */
 static COLD void clip_tri(vtx_t *const v[3], int textured, int decal) {
 #ifdef DB_GFX_NO_CULL
     const uint32_t cullmask = 0;
@@ -740,7 +996,7 @@ static COLD void clip_tri(vtx_t *const v[3], int textured, int decal) {
     sClipped++; sStClip++;
 #endif
     for (int i = 0; i < 3; i++) in[i] = *v[i];
-    for (int plane = 0; plane < 5 && n >= 3; plane++) {
+    for (int plane = 0; plane < (sScOn ? 10 : 6) && n >= 3; plane++) {
         int m = 0;
         for (int i = 0; i < n; i++) {
             vtx_t *a = &in[i], *b = &in[(i + 1) % n];
@@ -750,7 +1006,10 @@ static COLD void clip_tri(vtx_t *const v[3], int textured, int decal) {
             case 1: da = GUARD * a->w - a->x; db = GUARD * b->w - b->x; break;       /* x <= G w */
             case 2: da = GUARD * a->w + a->x; db = GUARD * b->w + b->x; break;       /* x >= -G w */
             case 3: da = GUARD * a->w - a->y; db = GUARD * b->w - b->y; break;       /* y <= G w */
-            default: da = GUARD * a->w + a->y; db = GUARD * b->w + b->y; break;      /* y >= -G w */
+            case 4: da = GUARD * a->w + a->y; db = GUARD * b->w + b->y; break;       /* y >= -G w */
+            case 5: da = WINGS64_FAR_CLIP ? a->w - a->z : 1.0f;                       /* far */
+                    db = WINGS64_FAR_CLIP ? b->w - b->z : 1.0f; break;
+            default: da = sc_dist(a, plane - 6); db = sc_dist(b, plane - 6); break;   /* scissor */
             }
             if (da >= 0.0f) out[m++] = *a;
             if ((da >= 0.0f) != (db >= 0.0f) && m < 12) lerp_vtx(&out[m++], a, b, da / (da - db));
@@ -804,7 +1063,7 @@ static void shadow_capture(vtx_t *const v[3]) {
     o = &sVol[sVolN * 9];
     for (int i = 0; i < 3; i++) {
         float iw = shz_invf(v[i]->w);
-        float x = (R.vp_tx + v[i]->x * iw * R.vp_sx) * SCALE, y = (R.vp_ty - v[i]->y * iw * R.vp_sy) * SCALE;
+        float x = (R.vp_tx + v[i]->x * iw * R.vp_sx) * sOutSx + sOutOx, y = (R.vp_ty - v[i]->y * iw * R.vp_sy) * sOutSy + sOutOy;
         if (x > VOL_COORD_MAX || x < -VOL_COORD_MAX || y > VOL_COORD_MAX || y < -VOL_COORD_MAX) { sVolBad = 1; return; }
         o[i * 3 + 0] = x; o[i * 3 + 1] = y; o[i * 3 + 2] = iw;
         sVolAlpha += v[i]->a;
@@ -834,12 +1093,53 @@ static void shadow_flush(void) {
 #if WINGS64_SHADOW_MOD
     if (sVolN && !sVolBad) {
         float a = sVolAlphaN ? sVolAlpha / (float)sVolAlphaN : 0.5f;
-        gpvr_mod_volume(sVol, sVolN);
+        if (!DBG_OFF(DBG_MOD)) gpvr_mod_volume(sVol, sVolN);
         gpvr_shadow_scale(a < 0.0f ? 1.0f : a > 1.0f ? 0.0f : 1.0f - a);
     }
 #endif
     sVolN = sVolBad = sVolAlphaN = sShadowRec = 0;
     sVolAlpha = 0.0f;
+}
+
+/* Full-screen overlays. The game frames its 3D views and its full-screen fades with SUBSCREEN, the overscan
+   safe area (10..310 x 8..222 of 320x240); the N64 scissors the 3D view to it and the TV's overscan hid the
+   border. The port draws 3D views unscissored to the screen edges, so a fade quad covering only SUBSCREEN
+   left a frame of scene around it (crash and Birdman star white fades, screen fade-outs).
+   DIVERGES: a no-Z triangle that samples no texture and covers SUBSCREEN is stretched to the screen edges.
+   Kill switch -DWINGS64_OVERLAY_FULL=0. */
+#ifndef WINGS64_OVERLAY_FULL
+#define WINGS64_OVERLAY_FULL 1
+#endif
+#define SUB_X0 ((10.0f + 2.0f) * SCALE)       /* SUBSCREEN edges in output pixels, 2 N64 pixels of slack */
+#define SUB_X1 ((310.0f - 2.0f) * SCALE)       /* (the HUD fade box lands at 18.0x, the fade-out quad at 15.4) */
+#define SUB_Y0 ((8.0f + 2.0f) * SCALE)
+#define SUB_Y1 ((222.0f - 2.0f) * SCALE)
+/* sStateOverlay (declared above emit_poly): current draw state has no depth test (before layer_fix) and
+   samples no texture. */
+
+/* The combiner never reads the texel (a texture can stay bound under a shade-only combiner). */
+static int texel_unused(void) {
+    if (!sFit.linear) return 0;
+    for (int ch = 0; ch < 4; ch++)
+        if (sFit.m0[ch] != 0.0f || sFit.mS[ch] != 0.0f || sFit.mA[ch] != 0.0f) return 0;
+    return 1;
+}
+
+static COLD void overlay_full(pvr_vertex_t *const p[], int n) {
+    float x0 = p[0]->x, x1 = p[0]->x, y0 = p[0]->y, y1 = p[0]->y;
+    for (int i = 1; i < n; i++) {
+        if (p[i]->x < x0) x0 = p[i]->x;
+        if (p[i]->x > x1) x1 = p[i]->x;
+        if (p[i]->y < y0) y0 = p[i]->y;
+        if (p[i]->y > y1) y1 = p[i]->y;
+    }
+    if (sOutSx != SCALE || x0 > SUB_X0 || x1 < SUB_X1 || y0 > SUB_Y0 || y1 < SUB_Y1) return;
+    for (int i = 0; i < n; i++) {
+        if (p[i]->x <= SUB_X0) p[i]->x = 0.0f;
+        else if (p[i]->x >= SUB_X1) p[i]->x = 640.0f;
+        if (p[i]->y <= SUB_Y0) p[i]->y = 0.0f;
+        else if (p[i]->y >= SUB_Y1) p[i]->y = 480.0f;
+    }
 }
 
 static HOT void do_tri(int ia, int ib, int ic) {
@@ -848,15 +1148,15 @@ static HOT void do_tri(int ia, int ib, int ic) {
     /* Colour image pointed at the z-buffer (cimg == zimg): shadow volume pass 1 (see shadow_capture). */
     if (R.cimg == R.zimg && R.cimg != 0) { shadow_capture(v); return; }
 #if WINGS64_OUTCODES
-    /* Trivial reject: all three beyond the same side plane (x+, x-, y+, y-, near; no far plane). */
-    if (v[0]->oc & v[1]->oc & v[2]->oc & 31) {
+    /* Trivial reject: all three beyond the same side plane (x+, x-, y+, y-, near, far). */
+    if (v[0]->oc & v[1]->oc & v[2]->oc & (31 | 64)) {
 #if DB_GFX_TRACE
         sRejTrivial++;
 #endif
         return;
     }
 #else
-    /* Trivial reject: all three beyond the same side plane (x+, x-, y+, y-, near; no far plane). */
+    /* Trivial reject: all three beyond the same side plane (x+, x-, y+, y-, near; far is left to the clipper). */
     {
         int plane = -1;
         if (v[0]->x > v[0]->w && v[1]->x > v[1]->w && v[2]->x > v[2]->w) plane = 0;
@@ -887,8 +1187,14 @@ static HOT void do_tri(int ia, int ib, int ic) {
     for (int i = 0; i < 3; i++) {
         float gw = GUARD * v[i]->w;
         if (v[i]->z + v[i]->w < 0.0f || v[i]->x > gw || v[i]->x < -gw || v[i]->y > gw || v[i]->y < -gw) needs_clip = 1;
+        if (WINGS64_FAR_CLIP && v[i]->z > v[i]->w) needs_clip = 1;
     }
 #endif
+    if (sScOn) {
+        int sc = scissor_test(v);
+        if (sc < 0) return;                 /* wholly outside one scissor edge */
+        needs_clip |= sc;
+    }
     /* Triangles crossing the near plane are culled after clipping (below): their orientation before
        clipping is not reliable once a vertex is behind the eye. */
     if ((R.geom & cullmask) && !needs_clip) {
@@ -913,6 +1219,13 @@ static HOT void do_tri(int ia, int ib, int ic) {
         sStDump = 0;
 #endif
         draw_state(1, 0, &sState); sStateEpoch = sEpoch;
+        sStateOverlay = WINGS64_OVERLAY_FULL && sState.depth_cmp == PVR_DEPTHCMP_ALWAYS && (!sState.tex || texel_unused());
+#if WINGS64_Z_TIEBREAK
+        if (sState.depth_cmp != PVR_DEPTHCMP_ALWAYS && !DBG_OFF(DBG_ZTB)) {
+            if (sZOrder < 256) sZOrder++;
+            sZBias = 1.0f + (float)sZOrder * (1.0f / 65536.0f);
+        }
+#endif
         layer_fix(&sState);
 #if DB_GFX_TRACE
         if (sTrace)
@@ -943,7 +1256,9 @@ static HOT void do_tri(int ia, int ib, int ic) {
         for (int i = 0; i < 3; i++)
             if (v[i]->pv_epoch != sEpoch) { to_pvr(v[i], &v[i]->pv, textured, decal); v[i]->pv_epoch = sEpoch; }
         sT_conv += TNOW() - t; t = TNOW();
-        gpvr_tri_pv_inline(&v[0]->pv, &v[1]->pv, &v[2]->pv);
+        if (sStateOverlay) { pvr_vertex_t *const p[3] = { &v[0]->pv, &v[1]->pv, &v[2]->pv }; overlay_full(p, 3); }
+        if (sLayerZ > 0.0f) layer_tri(&v[0]->pv, &v[1]->pv, &v[2]->pv);
+        else gpvr_tri_pv_inline(&v[0]->pv, &v[1]->pv, &v[2]->pv);
         sT_emit += TNOW() - t;
 #if DB_GFX_TRACE
         sListTris[sState.list]++; sStEmit++;
@@ -959,16 +1274,26 @@ static void screen_quad(float x0, float y0, float x1, float y1, float s0, float 
                         int textured, uint32_t argb, uint32_t oargb) {
     gpvr_vtx_t q[4];
     float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
+    if (sScOn) {
+        float nx0 = x0 < sScX0 ? sScX0 : x0, nx1 = x1 > sScX1 ? sScX1 : x1;
+        float ny0 = y0 < sScY0 ? sScY0 : y0, ny1 = y1 > sScY1 ? sScY1 : y1;
+        if (nx0 >= nx1 || ny0 >= ny1) return;
+        if (x1 > x0) { float k = (s1 - s0) / (x1 - x0); s0 += (nx0 - x0) * k; s1 -= (x1 - nx1) * k; }
+        if (y1 > y0) { float k = (t1 - t0) / (y1 - y0); t0 += (ny0 - y0) * k; t1 -= (y1 - ny1) * k; }
+        x0 = nx0; x1 = nx1; y0 = ny0; y1 = ny1;
+    }
     if (textured) {
         float iw = shz_invf(cur_tex_w), ih = shz_invf(cur_tex_h);
         u0 = (s0 - cur_uls) * iw; u1 = (s1 - cur_uls) * iw;
         v0 = (t0 - cur_ult) * ih; v1 = (t1 - cur_ult) * ih;
     }
     float z = sLayerZ > 0.0f ? sLayerZ : 1.0f;
-    q[0] = (gpvr_vtx_t){ x0 * SCALE, y0 * SCALE, z, u0, v0, argb, oargb };
-    q[1] = (gpvr_vtx_t){ x1 * SCALE, y0 * SCALE, z, u1, v0, argb, oargb };
-    q[2] = (gpvr_vtx_t){ x0 * SCALE, y1 * SCALE, z, u0, v1, argb, oargb };
-    q[3] = (gpvr_vtx_t){ x1 * SCALE, y1 * SCALE, z, u1, v1, argb, oargb };
+    x0 = x0 * sOutSx + sOutOx; x1 = x1 * sOutSx + sOutOx;
+    y0 = y0 * sOutSy + sOutOy; y1 = y1 * sOutSy + sOutOy;
+    q[0] = (gpvr_vtx_t){ x0, y0, z, u0, v0, argb, oargb };
+    q[1] = (gpvr_vtx_t){ x1, y0, z, u1, v0, argb, oargb };
+    q[2] = (gpvr_vtx_t){ x0, y1, z, u0, v1, argb, oargb };
+    q[3] = (gpvr_vtx_t){ x1, y1, z, u1, v1, argb, oargb };
     gpvr_tri(&q[0], &q[1], &q[2]);
     gpvr_tri(&q[1], &q[3], &q[2]);
 }
@@ -1017,6 +1342,7 @@ static OUTLINE void do_fillrect(uint32_t w0, uint32_t w1) {
     if (R.cimg == R.zimg) return;            /* z-buffer clear (gfx.md): the PVR clears depth per frame */
     draw_state(0, 1, &st);
     st.fog = 0;
+    sFillSeen = 1;
     if (cycle == 3) {                        /* G_CYC_FILL: RGBA5551 fill color */
         uint16_t c = R.fill & 0xFFFF;
         argb = 0xFF000000u | (((c >> 11) & 31) * 255 / 31) << 16 | (((c >> 6) & 31) * 255 / 31) << 8 | ((c >> 1) & 31) * 255 / 31;
@@ -1030,6 +1356,9 @@ static OUTLINE void do_fillrect(uint32_t w0, uint32_t w1) {
     gpvr_set_state(&st);
     TRACE("  fill %d,%d-%d,%d cyc %d list %d argb %08lx oml %08lx cimg %08lx\n", ulx, uly, lrx, lry, cycle, st.list,
           (unsigned long)argb, (unsigned long)R.oml, (unsigned long)R.cimg);
+    if (WINGS64_OVERLAY_FULL && sOutSx == SCALE && ulx * SCALE <= SUB_X0 && lrx * SCALE >= SUB_X1 && uly * SCALE <= SUB_Y0 && lry * SCALE >= SUB_Y1) {
+        ulx = uly = 0; lrx = 320; lry = 240;   /* a SUBSCREEN-sized fill (viewport clear) covers the screen */
+    }
     screen_quad(ulx, uly, lrx, lry, 0, 0, 0, 0, 0, argb, oargb);
     DIRTY();
 }
@@ -1117,6 +1446,7 @@ static HOT void run_dl(const uint32_t *pc) {
             if (idx == F3D_G_MV_VIEWPORT) {
                 const int16_t *vp = (const int16_t *)m;
                 R.vp_sx = vp[0] * 0.25f; R.vp_sy = vp[1] * 0.25f; R.vp_tx = vp[4] * 0.25f; R.vp_ty = vp[5] * 0.25f;
+                clip_rect_update();
                 TRACE("  viewport scale %d %d trans %d %d\n", vp[0], vp[1], vp[4], vp[5]);
             } else if (idx >= F3D_G_MV_L0 && idx <= F3D_G_MV_L7) {
                 int l = (idx - F3D_G_MV_L0) / 2;
@@ -1193,8 +1523,14 @@ static HOT void run_dl(const uint32_t *pc) {
             R.cimg = w1 & 0x1FFFFFFFu;
             break;
         case F3D_G_SETZIMG: R.zimg = w1 & 0x1FFFFFFFu; break;
+        case F3D_G_SETSCISSOR: {
+            uint8_t mode; uint16_t ulx, uly, lrx, lry;
+            f3d_scissor_decode(w0, w1, &mode, &ulx, &uly, &lrx, &lry);
+            sScissor[0] = ulx * 0.25f; sScissor[1] = uly * 0.25f; sScissor[2] = lrx * 0.25f; sScissor[3] = lry * 0.25f;
+            clip_rect_update();
+        } break;
         case F3D_G_RDPLOADSYNC: case F3D_G_RDPPIPESYNC: case F3D_G_RDPTILESYNC: case F3D_G_RDPFULLSYNC:
-        case F3D_G_SETSCISSOR: case F3D_G_SPNOOP: case F3D_G_NOOP:
+        case F3D_G_SPNOOP: case F3D_G_NOOP:
             break;
         default:
             sUnknown[w0 >> 24]++;
@@ -1206,6 +1542,183 @@ static HOT void run_dl(const uint32_t *pc) {
 static int sInit;
 static uint32_t sFrames;
 
+/* Frozen frame under the game's screen fade (patches/026, wings64_fbfreeze.h). Kill switch WINGS64_FB_FREEZE. */
+#include "../decomp/wings64_fbfreeze.h"
+static volatile int sFreezeReq;
+void wings64_fb_freeze(int on) { sFreezeReq = on; }
+static volatile int sPersistReq;
+void wings64_fb_persist(int on) { sPersistReq = on; }
+
+#if WINGS64_FB_PERSIST
+/* The persistent frame (gfx_pvr.c gpvr_persist_*) as the frame's first layer: full screen, opaque, below every
+   painter-depth layer (layer_fix) and all 3D geometry. */
+static COLD void persist_layer(pvr_ptr_t tex) {
+    gpvr_state_t st;
+    gpvr_vtx_t q[4];
+    /* A quarter-texel offset keeps nearest sampling on the same texel whether the PVR samples at pixel
+       corners or centres, so repeated captures cannot drift by a pixel. */
+    const float z = LAYER_STEP * 0.5f, u0 = 0.25f / PERSIST_W, v0 = 0.25f / PERSIST_H;
+    const float u = u0 + 640.0f / PERSIST_W, v = v0 + 480.0f / PERSIST_H;
+    memset(&st, 0, sizeof st);
+    st.list = GPVR_OP;
+    st.depth_cmp = PVR_DEPTHCMP_GEQUAL;
+    st.depth_write = 1;
+    st.filter = PVR_FILTER_NEAREST;
+    st.clamp = PVR_UVCLAMP_UV;
+    st.env = PVR_TXRENV_REPLACE;
+    st.tex = tex;
+    st.tex_fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED;
+    st.tex_w = PERSIST_W; st.tex_h = PERSIST_H;
+    gpvr_set_state(&st);
+    q[0] = (gpvr_vtx_t){ 0.0f, 0.0f, z, u0, v0, 0xFFFFFFFFu, 0 };
+    q[1] = (gpvr_vtx_t){ 640.0f, 0.0f, z, u, v0, 0xFFFFFFFFu, 0 };
+    q[2] = (gpvr_vtx_t){ 0.0f, 480.0f, z, u0, v, 0xFFFFFFFFu, 0 };
+    q[3] = (gpvr_vtx_t){ 640.0f, 480.0f, z, u, v, 0xFFFFFFFFu, 0 };
+    gpvr_tri(&q[0], &q[1], &q[2]);
+    gpvr_tri(&q[1], &q[3], &q[2]);
+}
+#endif
+
+
+#if DB_GFX_TOGGLES
+static char sDbgText[40];
+static uint64_t sDbgShownUntil;
+static COLD void dbg_toggles_poll(void) {
+    static uint32_t prev;
+    maple_device_t *c = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+    cont_state_t *st = c ? (cont_state_t *)maple_dev_status(c) : NULL;
+    uint32_t now, edge;
+    unsigned bit = 0;
+    if (!st) return;
+    now = (st->ltrig > 200 && st->rtrig > 200) ? st->buttons : 0;
+    edge = now & ~prev;
+    prev = now;
+    if (edge & CONT_DPAD_UP) bit = DBG_MOD;
+    else if (edge & CONT_DPAD_DOWN) bit = DBG_LAYER;
+    else if (edge & CONT_DPAD_LEFT) bit = DBG_PROD;
+    else if (edge & CONT_DPAD_RIGHT) bit = DBG_ZTB;
+    else if (edge & CONT_A) bit = DBG_DXT;
+    if (!bit) return;
+    sDbgOff ^= bit;
+    gpvr_mod_off = (sDbgOff & DBG_MOD) != 0;
+    if (bit == DBG_DXT || bit == DBG_PROD) gpvr_tex_reset();   /* cached textures were built with the old rule */
+    snprintf(sDbgText, sizeof sDbgText, "OFF%s%s%s%s%s%s", sDbgOff ? "" : " NONE", (sDbgOff & DBG_MOD) ? " MOD" : "",
+             (sDbgOff & DBG_LAYER) ? " LAYER" : "", (sDbgOff & DBG_PROD) ? " PROD" : "", (sDbgOff & DBG_ZTB) ? " ZTB" : "",
+             (sDbgOff & DBG_DXT) ? " DXT" : "");
+    sDbgShownUntil = timer_ms_gettime64() + 4000;
+    db_log("gfx: toggles %s\n", sDbgText);
+}
+#endif
+
+/* Debug toggle state for the FPS overlay (settings.c), or NULL when there is nothing to show. */
+const char *wings64_gfx_dbg_text(void) {
+#if DB_GFX_TOGGLES
+    if (sDbgOff || timer_ms_gettime64() < sDbgShownUntil) return sDbgText;
+#endif
+    return NULL;
+}
+
+/* Per-frame setup and wrap-up kept out of gfx_f3d_run, which inlines the whole per-triangle path and must stay
+   inside the 8 KB I-cache with it (hardware run 6: the hot section grew to 8.5 KB and flight DL time doubled). */
+static COLD void frame_begin_extras(void) {
+    sZOrder = 0; sZBias = 1.0f;
+#if DB_GFX_TOGGLES
+    dbg_toggles_poll();
+#endif
+    {
+        extern int wings64_game_state(void);
+        if (WINGS64_TITLE_FIT && wings64_game_state() == 0) {   /* title: SUBSCREEN -> the inset rectangle */
+            sOutSx = (640.0f - 2.0f * TITLE_MARGIN) / 300.0f; sOutOx = TITLE_MARGIN - 10.0f * sOutSx;
+            sOutSy = (480.0f - 2.0f * TITLE_MARGIN) / 214.0f; sOutOy = TITLE_MARGIN - 8.0f * sOutSy;
+        } else {
+            sOutSx = sOutSy = SCALE; sOutOx = sOutOy = 0.0f;
+        }
+    }
+    sScissor[0] = sScissor[1] = 0.0f; sScissor[2] = 320.0f; sScissor[3] = 240.0f;
+    clip_rect_update();
+#if WINGS64_FB_FREEZE
+    {
+        static int seen, on;
+        if (sFreezeReq != seen) {
+            seen = sFreezeReq;
+            if (seen) on = gpvr_freeze_capture();
+            else { gpvr_freeze_release(); on = 0; }
+            db_log("gfx: frozen frame %s\n", seen ? (on ? "on" : "unavailable") : "off");
+        }
+        if (on) {
+            gpvr_freeze_replay();
+            sSceneZ = 1;    /* the frame's own layers draw over the replayed scene (layer_fix) */
+        }
+    }
+#endif
+#if WINGS64_FB_PERSIST
+    {
+        static int seen;
+        static pvr_ptr_t tex;
+        if (sPersistReq != seen) {
+            seen = sPersistReq;
+            if (seen) { tex = gpvr_persist_begin(); sPersistFresh = 1; }
+            else { gpvr_persist_end(); tex = NULL; }
+            db_log("gfx: persistent frame %s\n", seen ? (tex ? "on" : "unavailable") : "off");
+        }
+        sPersistSkip = 0;
+        if (tex) {
+            /* Re-capture only after a frame that drew opaque content (3D, clears, boxes, the cursor): the album's
+               idle frames only redraw translucent text over the same picture, and capturing those fed every
+               frame's resampling back into the next (hardware: the screen blurred) at 109 ms a capture. */
+            static unsigned n;
+            if (sPersistFresh || sPrevFrameDrew) {
+                uint64_t tc = timer_us_gettime64();
+                gpvr_persist_capture(sCapRect, sPersistFresh ? 0 : sCapN);
+                if ((n++ & 15) == 0)
+                    db_log("gfx: persistent frame capture %lu us (%d rects)\n", (unsigned long)(timer_us_gettime64() - tc), sPersistFresh ? 0 : sCapN);
+                sPersistFresh = 0;
+            }
+            persist_layer(tex);
+            sPersistSkip = gpvr_list_bytes(GPVR_OP);
+        }
+    }
+#endif
+}
+
+static COLD void frame_end_extras(void) {
+    /* opaque or punch-through content beyond the persistent layer itself (sPersistSkip), or
+       translucent geometry that changed (the album cursor is drawn once per move, erase and highlight the same
+       size, so positions are compared; the idle "view photo" text only changes colour) */
+    {
+        static uint32_t prev_tr;
+        uint32_t tr = sPersistReq ? gpvr_list_hash(GPVR_TR) : 0;
+        sPrevFrameDrew = sSceneZ || sFillSeen || gpvr_list_bytes(GPVR_PT) > 0 || gpvr_list_bytes(GPVR_OP) > sPersistSkip || tr != prev_tr;
+        prev_tr = tr;
+        if (sPersistReq) {
+            /* The next capture copies only what this frame and the one before drew (gpvr_persist_capture: the
+               scaler's line filter then reaches each pixel twice instead of compounding over the whole screen).
+               Copying each frame's rectangles on two captures covers a frame buffer that is a frame behind. */
+            static gpvr_rect_t prev[CAP_RECTS];
+            static int prev_n;                   /* the previous frame's rectangles */
+            gpvr_rect_t u = { 640, 480, 0, 0, 0 };
+            int n = 0;
+            if (sPrevFrameDrew) {
+                if (sSceneZ || sFillSeen) gpvr_persist_forget();   /* 3D or a fill may have covered copied text */
+                n = gpvr_list_rects(GPVR_OP, sPersistSkip, sCapRect, 0, CAP_RECTS, &u);
+                n = gpvr_list_rects(GPVR_PT, 0, sCapRect, n, CAP_RECTS, &u);
+                n = gpvr_list_rects(GPVR_TR, 0, sCapRect, n, CAP_RECTS, &u);
+                if (n > CAP_RECTS) { sCapRect[0] = u; n = 1; }   /* many strips (a 3D thumbnail): their union */
+            }
+            for (int i = 0; i < prev_n; i++) sCapRect[n + i] = prev[i];
+            sCapN = n + prev_n;
+            sPrevFrameDrew = sCapN > 0;          /* nothing new, or only text copied before: no capture */
+            for (int i = 0; i < n; i++) prev[i] = sCapRect[i];
+            prev_n = n;
+#ifdef DB_PERSIST_RECTS
+            db_log("gfx: cap n %d u %d,%d-%d,%d op %u/%u pt %u tr %u fill %d z %d\n", n, u.x0, u.y0, u.x1, u.y1,
+                   (unsigned)gpvr_list_bytes(GPVR_OP), (unsigned)sPersistSkip, (unsigned)gpvr_list_bytes(GPVR_PT),
+                   (unsigned)gpvr_list_bytes(GPVR_TR), sFillSeen, sSceneZ);
+            for (int i = 0; i < sCapN && sCapN <= 4; i++) db_log("  r %d,%d-%d,%d\n", sCapRect[i].x0, sCapRect[i].y0, sCapRect[i].x1, sCapRect[i].y1);
+#endif
+        }
+    }
+}
 
 /* The thread inside gfx_f3d_run while a display list is interpreted (else NULL): prof.c's in-DL sampler. */
 void *volatile wings64_gfx_dl_thread;
@@ -1230,7 +1743,8 @@ HOT void gfx_f3d_run(const void *dl) {
     DIRTY();
     R.mv_top = 0;
     R.mvp_dirty = 1;
-    sLayerZ = 0.0f; sLayerN = sSceneZ = 0;
+    sLayerZ = 0.0f; sLayerHi = LAYER_STEP; sSceneZ = 0;
+    frame_begin_extras();
 #if WINGS64_TEX_MEMO
     sTexFrame++;            /* per-frame memo: textures may change between display lists */
 #endif
@@ -1249,8 +1763,11 @@ HOT void gfx_f3d_run(const void *dl) {
     sMinW = 1e30f; sMaxW = -1e30f;
     TRACE("trace frame %lu\n", (unsigned long)sFrames);
 #endif
+    sFillSeen = 0;
     run_dl(dl);
+    frame_end_extras();
     shadow_flush();
+    if (sOutSx != SCALE) title_border();   /* after the shadow volumes: last TR polygons of the frame */
     sShadowDL = 0;
 #if DB_GFX_TRACE
     TRACE("  tris op %lu pt %lu tr %lu | rej %lu cull %lu clip %lu vtx %lu w %.3g..%.3g\n", (unsigned long)sListTris[0],
@@ -1275,9 +1792,10 @@ HOT void gfx_f3d_run(const void *dl) {
         db_log("gfx: cc cache hit %lu miss %lu\n", (unsigned long)gfx_cc_cache_hits, (unsigned long)gfx_cc_cache_misses);
 #endif
         sT_vtx = sT_state = sT_conv = sT_emit = sT_other = 0;
-        db_log("gfx: frame %lu tris %lu states %lu tex up %lu hit %lu ovf %lu\n", (unsigned long)sFrames,
-               (unsigned long)gpvr_stats.tris, (unsigned long)gpvr_stats.state_changes,
-               (unsigned long)gpvr_stats.tex_uploads, (unsigned long)gpvr_stats.tex_hits, (unsigned long)gpvr_stats.overflow);
+        db_log("gfx: frame %lu tris %lu states %lu tex up %lu hit %lu ovf %lu | ta opb-oom %lu in-ovf %lu\n",
+               (unsigned long)sFrames, (unsigned long)gpvr_stats.tris, (unsigned long)gpvr_stats.state_changes,
+               (unsigned long)gpvr_stats.tex_uploads, (unsigned long)gpvr_stats.tex_hits, (unsigned long)gpvr_stats.overflow,
+               (unsigned long)gpvr_stats.opb_oom, (unsigned long)gpvr_stats.ta_ovf);
         for (int i = 0; i < 256; i++)
             if (sUnknown[i]) { db_log("gfx: unhandled op %02X x%lu\n", i, (unsigned long)sUnknown[i]); sUnknown[i] = 0; }
     }

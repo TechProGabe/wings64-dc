@@ -25,3 +25,6 @@ Own additions: 002 (setimg opcode), 010 (debug vertex overrun), 011 (media copy 
 | 023 | kernel thread's idle spin blocks instead (KOS ticks gave the spin ~44% of every frame) (`DIVERGES`) |
 | 024 | the game's `_uvDebugPrintf` diagnostics forwarded to the port log, rate-limited (hardware hang triage) |
 | 025 | port splash: "TECHPROGABE presents" before the title, game backdrop/font/SFX (`DIVERGES`, WINGS64_SPLASH) |
+| 026 | screen fade-outs draw over the frozen last frame (PVR clears every frame) (`DIVERGES`, WINGS64_FB_FREEZE) |
+| 027 | debug camera aimed at the landing pad (off unless WINGS64_DBG_LOOK_AT_PAD=<units>) |
+| 028 | photo album keeps a persistent frame buffer (read back from VRAM) (`DIVERGES`, WINGS64_FB_PERSIST) |

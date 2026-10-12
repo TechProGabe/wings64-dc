@@ -1,5 +1,103 @@
 # state-log — evidence, newest first
 
+## 2026-10-12 — hardware run 11 (disc 6289338d-1012-2237, LOG009, 76 s), maintainer report
+- Maintainer: "it works just menu is laggy but thats ok."
+- Log: album captures 0.1-11 ms (one 151 ms outlier, one 37 ms with 3 rects); idle album frames DL 0.4 ms
+  (~60 fps); the thumbnail fill-in phase 2-4 fps (the game's 0.1 s wait per slot plus 3D renders and captures);
+  flight 44.6 fps, title 38, results 33; no `pvr: wait ready timed out`; `ta opb-oom` still +15 per 30 frames.
+- Visual pass 2 closed on hardware. Album menu speed queued (STATE #1).
+
+## 2026-10-12 — hardware run 10 (disc 6289338d-1012-2216, LOG008), maintainer report + fix
+- Maintainer: "didnt crash but still has the 'move the menu blur' problem ... everything else about the photos was
+  fine, fps was good no lag in menu, but looks weird."
+- Log: ~13 captures/s, mostly 1 rect at 17-28 ms. Flycast with DB_PERSIST_RECTS: every idle frame's TR x/y hash
+  changes (text), so idle frames captured their text; >32 glyph strips became one union over the photos.
+- Fix: textured strips are copied once per screen box + texture (forgotten on 3D/fill frames), glyphs merge into
+  line rects, untextured strips (cursor bars) stay separate. Flycast: idle frames copy nothing, cursor moves,
+  single view and back to the grid correct. Disc 6289338d-1012-2237 (wings64-dc-20261012g-album-text).
+
+## 2026-10-12 — hardware run 9 (disc 6289338d-1012-2148, LOG007, 94 s), maintainer report + fix
+- Maintainer: "hoizon is perfect, photo screen crashed."
+- Log: the PVR stopped right after the album's first capture, when the per-frame scaler switch first wrote
+  SCALER_CFG (after pvr_wait_render_done). With run 8's hang on the restore write, any run-time scaler write is
+  out. Album captures now copy only the rectangles the last two frames drew (strip bounding boxes from the
+  lists; union for 3D thumbnails; whole screen when no strips). Flycast: a one-capture-per-frame version lost the
+  header bar (frame buffer a frame behind in Flycast at least), so each frame's rectangles are copied twice.
+  Flycast album: header, grid, thumbnails, cursor moves and single view all correct; captures 0.3-3.6 ms.
+- Gate PASS, CI PASS, kill switches clean, `.text.hot.gfx` 6,616 B. Disc 6289338d-1012-2216 staged
+  (wings64-dc-20261012f-album-rects).
+
+## 2026-10-12 — hardware run 8 (disc 6289338d-1012-2102, LOG006, 150 s), maintainer report + fixes
+- Maintainer: "The water looks better, but on the horizon at the edge of the sea there's like a white line. Photo
+  looks better. It no longer shrinks but now it flickers like hell. Then the game crash."
+- Crash: `gfx: persistent frame off` then `pvr: wait ready timed out` every second; the album exit restored
+  SCALER_CFG from a register read. Now never read back: KOS's value by cable (0x401 / VGA 0x400).
+- Flicker: 0x400 (no vertical filter) for the whole album on 480i, and capture every frame (~18/s at 37 ms):
+  the pulsing "view photo" text changed the TR content hash. Now 0x400 only on frames that will be read back,
+  set after pvr_wait_render_done before the scene is finished; the hash covers vertex x/y only. Flycast album
+  run: 2-3 log lines (<= 48 captures) instead of 60, cursor moves clean.
+- Horizon line: trace shows the game's own TR haze band at the horizon (y 228-232 of 480, d1e5ff alpha ff -> 00);
+  sea vertex colours are uniform (ff3f8cdd), so it is not a perspective-colour artefact. Maintainer's N64 photo:
+  the sea stops before the horizon. Cause: no far-plane clipping (sea to w ~9,000 under far ~2,129; Fast3D clips
+  at z <= w). WINGS64_FAR_CLIP added; Flycast before/after in build/evidence/sea-farclip-before-after-flycast.png.
+  Disc wings64-dc-20261012e-farclip supersedes 20261012d.
+- Gate PASS, CI PASS, kill switches clean, `.text.hot.gfx` 6,556 B. Disc 6289338d-1012-2136 staged
+  (wings64-dc-20261012d-album-scaler).
+
+## 2026-10-12 — hardware run 7 (disc 6289338d-1012-1816, LOG005, 264 s), maintainer report + fixes
+- Maintainer: "loading is much better. title looks good. layer depth is the water problem, turning it off it looks
+  right. target looks good. white flash looks right. turning off layer did cause other visual problems. photo works
+  ok, but this crazy blur effect happens on the photo screen. when i move around the screen to select photos the
+  whole image compacts."
+- Log: `cd: spin down ok`; flight 51 fps (first test), hang glider test 36, title 37, results 57-62; album capture
+  36-39 ms; `ta opb-oom` +15 per 30 frames in every state (not content-driven); toggles used: MOD, LAYER.
+- Water: Flycast trace shows the sea (cc fc111404:ff13ffff, 24 clipped tris) is a pre-scene no-Z layer. Constant
+  painter depth = no perspective correction on the PVR. Fix: per-polygon depth keeps 1/w ratios (layer_depth).
+  Also found: Flycast hides depths around 1e-10, so sky and open sea were black in every Flycast run so far;
+  floors 1e-7 and 1e-8 both render sky, clouds and a perspective-correct sea (build/evidence/sea-layer-persp-flycast.png).
+- Album: KOS scaler 0x401 (non-VGA) smooths and shrinks each frame-buffer write; the re-capture loop compounded it.
+  Scaler 1.0 while persistent; quarter-texel offset. Flycast also showed a stale cursor highlight after a move
+  (equal TR sizes skipped a capture); now a TR content hash. Gate PASS, CI PASS, kill switches build clean,
+  `.text.hot.gfx` 6,600 B. Disc 6289338d-1012-2102 staged (wings64-dc-20261012c-sea-album).
+
+## 2026-10-12 — hardware run 6 (disc 6289338d-1012-1740, LOG004, 378 s), maintainer report
+- Maintainer: target fixed; water still broken ("you can't see where the water is"); title stretch overshoots the
+  TV; photos work but the check screen is "insanely slow" and gets blurry; glider still visible while taking a
+  photo; optical drive louder/strained than before.
+- LOG004: `ta opb-oom` 5707 in 378 s (about every other frame from the title on; Flycast 0): the TA's object
+  pointer pool runs out and drops the rest of a list. `persistent frame capture 109264 us` (P2 VRAM reads).
+  Flight 37.8 fps median this run (the profiler build; run 5 was 53). "RDP timeout on g [103]" + ring dump at the
+  demo test setup (game watchdog).
+- Changes for run 7: WINGS64_OPB_BIG, cached readback + capture policy, title inset 12 px with black border,
+  WINGS64_CD_SPINDOWN, DB_GFX_TOGGLES in hwdisc. Flycast: album header/boxes/cursor/thumbnails intact with
+  ~40 captures per album visit instead of one per frame; title border; gate PASS.
+- Photo-taking: the game draws only a red reticle sprite over the normal chase view while Z is held (hud.c
+  hudDrawCamera); no first-person switch in the code. Maintainer: not an issue (original behaviour).
+
+## 2026-10-12 — visual pass 2 (Flycast): fades, sea, landing target, photo album; LOG003 read
+- LOG003.TXT (disc 123d29e-1012-0123, 378 s, maintainer's SD card; copy kept off-repo): flight 53.1 fps (DL
+  median 8.5 ms, max 28.8), title 46, results 72; no hang. "RSP timeout on g ... Recovered" 3x at loads.
+- Maintainer: title/Birdman-star/white transitions "not fully scaled out" = border around the white box. Cause:
+  fade quads span SUBSCREEN, 3D spills to the edges. WINGS64_OVERLAY_FULL; the HUD fade box sits at y 18.0x px,
+  so the SUBSCREEN test needed 2 N64 px of slack (1 px failed by float noise). patches/026 replays the last
+  frame's lists under func_8032D51C fades. Flycast shots: crash fade and menu fade-outs now full screen.
+- Sea (maintainer: "looks wrong", "weird closer up"): combiner fc111404:ff13ffff = TEXEL0*TEXEL1*SHADE, both tiles
+  the same 64x64 I4 texture at shift 1 / 0; WINGS64_TEX_PRODUCT bakes the product (128x128). DXT_EXACT A/B:
+  identical sea. Water hardware regression: depth-tested TR states (the sea) carried the modifier bit since
+  a84f8b9; now OP/PT only (Flycast cannot show the difference).
+- Landing target (Fable consult; ROM dump of UVMD 0x102/0x103): no CI, no clamp, dxt 0; coplanar layers.
+  patches/027 debug camera (WINGS64_DBG_LOOK_AT_PAD=100/300): Z_TIEBREAK=0 shows the bullseye cut off by the
+  pad's grass quad (LOD0) and mostly hidden (LOD1), =1 shows it whole (build/evidence/target-tiebreak-flycast.png).
+- Photo album: photos are camera parameters re-rendered into 80x59 viewports; the game resets the scissor to
+  full screen after setting it, the N64 RSP clips to the viewport. WINGS64_SCISSOR clips to a small scissor or
+  viewport; patches/028 + WINGS64_FB_PERSIST read the PVR front buffer back each album frame (Flycast needs
+  EMU_FLYCAST_ARGS="-config config:rend.EmulateFramebuffer=yes"; capture 1.4 ms there). Without: text on black;
+  with: thumbnail grid, cursor, single view "Save this Photo?" (build/evidence/album-photos-flycast.png).
+- Title (maintainer: "characters and title are cropped in like the white frame"): the pilots picture ends at
+  SUBSCREEN's bottom edge (y 444) with island below it. WINGS64_TITLE_FIT maps SUBSCREEN to the full screen in
+  game state 0 (build/evidence/title-fit-flycast.png).
+- Gate PASS (M4_OK), Flycast fps unchanged (title 56.5, flight 55.6). Kill-switch-off build clean.
+
 ## 2026-10-11 — hardware run 4 (disc 123d29e-1012-0123: shadows, draw order, splash), maintainer report
 - No SD card in this run, so no log. Maintainer: everything else looks right now; two issues left:
   water looks wrong (looked right on 462f919, so a regression from a84f8b9) and occasional pop-in on fast

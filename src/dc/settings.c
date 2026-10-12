@@ -48,6 +48,7 @@ int db_sd_available(void);
 int db_sd_enabled(void);
 void db_sd_set_enabled(int on);
 const char *db_sd_status(void);
+const char *wings64_gfx_dbg_text(void);
 
 #define MENU_FONT 6        /* title and Option menus */
 #define SFX_OPTION_FLIP 0x54 /* options.c: Stereo/Mono, Sound Track changes */
@@ -387,6 +388,11 @@ void wings64_settings_frame(void) {
         sd[3 + i] = '\0';
         /* right-aligned (~8 px per glyph): from the counter's x a long status runs off the 320 px screen */
         uvFontOverlayStr_dc(3, MAX(8, 312 - (3 + i) * 8), SCREEN_HEIGHT - FPS_TOP - 30, 0xFF, 0xFF, 0x00, sd);
+    }
+    {
+        /* hardware bisect toggles (gfx_f3d.c DB_GFX_TOGGLES): which suspects are switched off */
+        const char *dbg = wings64_gfx_dbg_text();
+        if (dbg != NULL) uvFontOverlayStr_dc(3, 8, SCREEN_HEIGHT - FPS_TOP - 30, 0xFF, 0x80, 0x80, dbg);
     }
     if (!(sFlags & FLAG_FPS) || sFps == 0) return;
     uvSprintf(str, "%d", (int)sFps);

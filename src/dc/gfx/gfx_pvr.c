@@ -15,6 +15,7 @@
 #define VB_MOD (64 * 1024)
 
 gpvr_stats_t gpvr_stats;
+int gpvr_mod_off;                /* debug toggle: no modifier bit on any header (gfx_f3d.c DB_GFX_TOGGLES) */
 static uint8_t *vbuf[3];
 static const pvr_list_t list_id[3] = { PVR_LIST_OP_POLY, PVR_LIST_PT_POLY, PVR_LIST_TR_POLY };
 static gpvr_state_t cur[3];
@@ -42,6 +43,16 @@ uint8_t *gpvr_wp[3], *gpvr_wend[3];       /* write pointer / limit per list (gfx
 #define wend gpvr_wend
 #endif
 
+/* Tile Accelerator overflow (pop-in triage, hardware only: Flycast models neither): the TA raises
+   OPB_OUTOFMEM when the object pointer buffers and their overflow pool run out (it then drops the rest of
+   the list for that frame) and TA_INPUT_OVERFLOW when its vertex input queue overflows. Counted here and
+   logged on the 30-frame gfx: line. */
+static void ta_error(uint32_t code, void *data) {
+    (void)data;
+    if (code == ASIC_EVT_PVR_OPB_OUTOFMEM) gpvr_stats.opb_oom++;
+    else gpvr_stats.ta_ovf++;
+}
+
 void gpvr_init(void) {
     cap[0] = VB_OP; cap[1] = VB_PT; cap[2] = VB_TR;
     for (int i = 0; i < 3; i++) {
@@ -50,6 +61,10 @@ void gpvr_init(void) {
         pvr_set_vertbuf(list_id[i], vbuf[i], cap[i]);
     }
     pvr_set_zclip(0.0f);
+    asic_evt_set_handler(ASIC_EVT_PVR_OPB_OUTOFMEM, ta_error, NULL);
+    asic_evt_enable(ASIC_EVT_PVR_OPB_OUTOFMEM, ASIC_IRQ_DEFAULT);
+    asic_evt_set_handler(ASIC_EVT_PVR_TA_INPUT_OVERFLOW, ta_error, NULL);
+    asic_evt_enable(ASIC_EVT_PVR_TA_INPUT_OVERFLOW, ASIC_IRQ_DEFAULT);
 #if WINGS64_SHADOW_MOD
     mbuf = memalign(32, VB_MOD);
     if (!mbuf) arch_abort();
@@ -117,10 +132,212 @@ void gpvr_mod_volume(const float *tris, int n) {
 void gpvr_shadow_scale(float scale) { shadow_scale = scale; }
 #endif
 
+#if WINGS64_DIRECT_EMIT
+/* Frozen frame (patches/026, gfx_f3d.c wings64_fb_freeze). Each list's records for a frame stay in that
+   frame's half of the DMA buffer until the frame after next, so the last finished frame can be copied out
+   between frames and written again, ahead of new polygons, into later frames. */
+static uint8_t *last_base[4];
+static size_t last_len[4];
+static uint8_t *frz[4];
+static size_t frz_len[4];
+
+int gpvr_freeze_capture(void) {
+    gpvr_freeze_release();
+    for (int i = 0; i < 4; i++) {
+        if (!last_len[i]) continue;
+        frz[i] = memalign(32, last_len[i]);
+        if (!frz[i]) { gpvr_freeze_release(); return 0; }
+        shz_memcpy(frz[i], last_base[i], last_len[i]);
+        frz_len[i] = last_len[i];
+    }
+    return 1;
+}
+
+void gpvr_freeze_replay(void) {
+    for (int i = 0; i < 3; i++)
+        if (frz_len[i] && wp[i] + frz_len[i] <= wend[i]) { shz_memcpy(wp[i], frz[i], frz_len[i]); wp[i] += frz_len[i]; }
+#if WINGS64_SHADOW_MOD
+    if (frz_len[3] && mwp + frz_len[3] <= mwend) { shz_memcpy(mwp, frz[3], frz_len[3]); mwp += frz_len[3]; }
+#endif
+    gpvr_state_serial++;   /* the replayed records end with their own last header */
+    memset(cur_valid, 0, sizeof cur_valid);
+}
+
+void gpvr_freeze_release(void) {
+    for (int i = 0; i < 4; i++) { free(frz[i]); frz[i] = NULL; frz_len[i] = 0; }
+}
+#else
+int gpvr_freeze_capture(void) { return 0; }   /* the pvr_list_prim path keeps no frame copy */
+void gpvr_freeze_replay(void) { }
+void gpvr_freeze_release(void) { }
+#endif
+
+/* Persistent frame buffer (patches/028, gfx_f3d.c wings64_fb_persist). The N64 never clears its frame buffer
+   by itself; the photo album draws each thumbnail once and later frames only redraw text. While persistence
+   is on, the last finished frame is read back from VRAM (KOS front buffer, linear RGB565 640x480 in the
+   32-bit window, as vid_set_vram maps it) into a 1024x512 non-twiddled RGB565 texture that gfx_f3d.c draws
+   as the frame's first layer. ~600 KB of uncached VRAM reads per frame: album screens only. */
+static pvr_ptr_t persist_tex;
+
+/* On composite/S-video KOS sets the render scaler to 0x401: lines are smoothed (480i flicker filter) and the
+   image shrinks by 1/1024 as tiles are written to the frame buffer. Re-capturing the whole screen fed that back
+   every time (hardware run 7: the album blurred and crept smaller as the cursor moved; Flycast ignores the
+   scaler). Writing SCALER_CFG at run time hung the PVR on hardware (runs 8 and 9), so the scaler stays KOS's:
+   instead a capture copies only the rectangles the finished frame drew into, so each pixel passes the filter
+   about once, as on an ordinary frame. */
+
+void gpvr_persist_forget(void);
+
+pvr_ptr_t gpvr_persist_begin(void) {
+    if (!persist_tex) {
+        if (pvr_mem_available() < PERSIST_W * PERSIST_H * 2 + 64 * 1024) gpvr_tex_reset();
+        persist_tex = pvr_mem_malloc(PERSIST_W * PERSIST_H * 2);
+        gpvr_persist_forget();
+    }
+    return persist_tex;
+}
+
+void gpvr_persist_end(void) {
+    if (!persist_tex) return;
+    dc_pvr_vram_fence();
+    pvr_mem_free(persist_tex);
+    persist_tex = NULL;
+}
+
+/* Copy the finished frame's rectangles r[0..n) (output pixels, x1/y1 exclusive) into the persistent texture;
+   n <= 0 copies the whole screen. */
+void gpvr_persist_capture(const gpvr_rect_t *r, int n) {
+    static const gpvr_rect_t full = { 0, 0, 640, 480, 0 };
+    uintptr_t front;
+    const uint8_t *src;
+    uint8_t *dst = (uint8_t *)persist_tex;
+    if (!dst) return;
+    if (n <= 0) { r = &full; n = 1; }
+    pvr_wait_render_done();
+    front = (uintptr_t)pvr_get_front_buffer();
+    /* Read through the cached P1 alias of the same VRAM (burst line fills; the uncached P2 window took 109 ms
+       a frame on hardware), invalidating each span first so no stale lines are read. */
+    src = (const uint8_t *)(((PVR_RAM_BASE | ((front - PVR_RAM_BASE) >> 1)) & 0x1FFFFFFFu) | 0x80000000u);
+    for (int i = 0; i < n; i++) {
+        /* one pixel of margin for the scaler's line filter; 16-pixel (32-byte) column alignment for the cache */
+        int x0 = (r[i].x0 - 1) & ~15, x1 = (r[i].x1 + 16) & ~15, y0 = r[i].y0 - 1, y1 = r[i].y1 + 1;
+        if (x0 < 0) x0 = 0;
+        if (x1 > 640) x1 = 640;
+        if (y0 < 0) y0 = 0;
+        if (y1 > 480) y1 = 480;
+        for (int y = y0; y < y1 && x1 > x0; y++) {
+            dcache_inval_range((uintptr_t)(src + (y * 640 + x0) * 2), (size_t)(x1 - x0) * 2);
+            shz_memcpy(dst + (y * PERSIST_W + x0) * 2, src + (y * 640 + x0) * 2, (size_t)(x1 - x0) * 2);
+        }
+    }
+}
+
+/* Textured strips already copied into the persistent picture (screen box + texture word): album text is redrawn
+   every frame in the same place, and copying it again on every cursor move re-filtered its rows each time
+   (hardware run 10: "move the menu blur"). Forgotten whenever a frame may have drawn over it. */
+#define SEEN_N 1024
+static uint32_t seen[SEEN_N];
+void gpvr_persist_forget(void) { memset(seen, 0, sizeof seen); }
+static __attribute__((unused)) int seen_add(uint32_t h) {           /* 1: newly added (copy it), 0: copied before */
+    h |= 1u;
+    for (uint32_t i = h & (SEEN_N - 1), k = 0; k < 16; k++, i = (i + 1) & (SEEN_N - 1)) {
+        if (seen[i] == h) return 0;
+        if (!seen[i]) { seen[i] = h; return 1; }
+    }
+    return 1;                               /* table crowded: copy it */
+}
+
+/* Screen rectangles of the strips in a list so far this frame, from byte offset skip (direct emit only):
+   appended to r[n..max); returns the new count, or max + 1 once they do not fit. *u grows to their union.
+   Textured strips copied before (seen_add) are left out; textured strips on overlapping rows merge into one
+   rectangle (a line of text), untextured ones stay apart (the cursor's four border bars must not become the
+   whole photo they frame). */
+int gpvr_list_rects(int list, size_t skip, gpvr_rect_t *r, int n, int max, gpvr_rect_t *u) {
+#if WINGS64_DIRECT_EMIT
+    float bx0 = 1e9f, by0 = 1e9f, bx1 = -1e9f, by1 = -1e9f;
+    uint32_t tex = 0;
+    for (const uint8_t *p = wbase[list] + skip; p < wp[list]; p += 32) {
+        const pvr_vertex_t *v = (const pvr_vertex_t *)p;
+        if ((v->flags & 0xE0000000u) != PVR_CMD_VERTEX) {
+            const uint32_t *h = (const uint32_t *)p;
+            tex = (h[0] & PVR_TA_CMD_TXRENABLE) ? h[3] : 0;   /* textured: header word 3 is the texture */
+            bx0 = by0 = 1e9f; bx1 = by1 = -1e9f;
+            continue;
+        }
+        if (v->x < bx0) bx0 = v->x;
+        if (v->x > bx1) bx1 = v->x;
+        if (v->y < by0) by0 = v->y;
+        if (v->y > by1) by1 = v->y;
+        if (v->flags == PVR_CMD_VERTEX_EOL) {
+            gpvr_rect_t b;
+            b.x0 = (int16_t)(bx0 < 0.0f ? 0 : bx0 > 640.0f ? 640 : bx0);
+            b.x1 = (int16_t)(bx1 < 0.0f ? 0 : bx1 > 639.0f ? 640 : bx1 + 1.0f);
+            b.y0 = (int16_t)(by0 < 0.0f ? 0 : by0 > 480.0f ? 480 : by0);
+            b.y1 = (int16_t)(by1 < 0.0f ? 0 : by1 > 479.0f ? 480 : by1 + 1.0f);
+            b.tex = tex != 0;
+            bx0 = by0 = 1e9f; bx1 = by1 = -1e9f;
+            if (b.x1 <= b.x0 || b.y1 <= b.y0) continue;
+            if (tex && !seen_add(((uint32_t)b.x0 * 2654435761u) ^ ((uint32_t)b.y0 * 40503u) ^ ((uint32_t)b.x1 << 20)
+                                 ^ ((uint32_t)b.y1 << 10) ^ tex * 2246822519u))
+                continue;
+            if (b.x0 < u->x0) u->x0 = b.x0;
+            if (b.y0 < u->y0) u->y0 = b.y0;
+            if (b.x1 > u->x1) u->x1 = b.x1;
+            if (b.y1 > u->y1) u->y1 = b.y1;
+            if (b.tex) {
+                int k;
+                for (k = 0; k < n && k < max; k++)
+                    if (r[k].tex && r[k].y0 < b.y1 && b.y0 < r[k].y1 && r[k].x0 < b.x1 + 32 && b.x0 < r[k].x1 + 32) break;
+                if (k < n && k < max) {
+                    if (b.x0 < r[k].x0) r[k].x0 = b.x0;
+                    if (b.y0 < r[k].y0) r[k].y0 = b.y0;
+                    if (b.x1 > r[k].x1) r[k].x1 = b.x1;
+                    if (b.y1 > r[k].y1) r[k].y1 = b.y1;
+                    continue;
+                }
+            }
+            if (n < max) r[n] = b;
+            if (n <= max) n++;
+        }
+    }
+    return n;
+#else
+    (void)list; (void)skip; (void)r; (void)max;
+    u->x0 = u->y0 = 0; u->x1 = 640; u->y1 = 480;
+    return max + 1;
+#endif
+}
+
+/* Hash of a list's screen footprint so far this frame: vertex x and y only (direct emit; its size otherwise).
+   The persistent frame's capture policy uses it to tell apart frames that draw the same amount in different
+   places (album cursor moves) while ignoring changes in colour, texture or depth (the pulsing "view photo" text,
+   which otherwise re-captured every frame: run 8). */
+uint32_t gpvr_list_hash(int list) {
+#if WINGS64_DIRECT_EMIT
+    uint32_t h = 2166136261u;
+    for (const uint32_t *p = (const uint32_t *)wbase[list], *e = (const uint32_t *)wp[list]; p < e; p += 8)
+        if ((p[0] & 0xE0000000u) == PVR_CMD_VERTEX) { h = (h ^ p[1]) * 16777619u; h = (h ^ p[2]) * 16777619u; }
+    return h;
+#else
+    return (uint32_t)used[list];
+#endif
+}
+
+/* Bytes written to a list so far this frame (direct emit; 0 otherwise). */
+size_t gpvr_list_bytes(int list) {
+#if WINGS64_DIRECT_EMIT
+    return (size_t)(wp[list] - wbase[list]);
+#else
+    return used[list];
+#endif
+}
+
 void gpvr_frame_end(void) {
 #if WINGS64_DIRECT_EMIT
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 3; i++) {
         if (wp[i] != wbase[i]) pvr_vertbuf_written(list_id[i], (size_t)(wp[i] - wbase[i]));
+        last_base[i] = wbase[i]; last_len[i] = (size_t)(wp[i] - wbase[i]);
+    }
 #endif
 #if WINGS64_SHADOW_MOD
     if (mwp == mbase) {
@@ -129,6 +346,9 @@ void gpvr_frame_end(void) {
         gpvr_mod_volume(empty, 1);
     }
     pvr_vertbuf_written(PVR_LIST_OP_MOD, (size_t)(mwp - mbase));
+#if WINGS64_DIRECT_EMIT
+    last_base[3] = mbase; last_len[3] = (size_t)(mwp - mbase);
+#endif
     if (shadow_scale != shadow_scale_set) { pvr_set_shadow_scale(1, shadow_scale); shadow_scale_set = shadow_scale; }
 #endif
     pvr_scene_finish();
@@ -180,8 +400,10 @@ static void compile_and_emit(const gpvr_state_t *st) {
     cxt.depth.write = st->depth_write ? PVR_DEPTHWRITE_ENABLE : PVR_DEPTHWRITE_DISABLE;
 #if WINGS64_SHADOW_MOD
     /* Depth-tested geometry receives shadow volumes (cheap shadow: colour scaled inside a volume; OP volumes
-       act on the OP and PT lists). Screen-space layers (HUD, sky) stay as they are. */
-    if (st->depth_cmp != PVR_DEPTHCMP_ALWAYS) {
+       act on the OP and PT lists). Screen-space layers (HUD, sky) stay as they are. TR polygons never get the
+       modifier bit: the frame has no TR modifier list, and on hardware the translucent sea came out wrong
+       with it set (hardware run 4; Flycast ignored it). */
+    if (st->depth_cmp != PVR_DEPTHCMP_ALWAYS && st->list != GPVR_TR && !gpvr_mod_off) {
         cxt.fmt.modifier = PVR_MODIFIER_ENABLE;
         cxt.gen.modifier_mode = PVR_MODIFIER_CHEAP_SHADOW;
     }
