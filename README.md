@@ -1,28 +1,38 @@
 # wings64-dc
 
-Native Sega Dreamcast port of **Pilotwings 64** (Nintendo 64, 1996), built from the
-[Pilotwings64Decomp](https://github.com/gcsmith/Pilotwings64Decomp) matching
-decompilation on [KallistiOS](https://github.com/KallistiOS/KallistiOS), with
-[sh4zam](https://github.com/TechProGabe/sh4zam) as the SH-4 math layer.
+Pilotwings 64, running natively on a Sega Dreamcast. No emulator: the game's own code, rebuilt for the SH-4.
 
-**Status: M0 (toolchain + boot check disc).** `PLAN.md` holds the architecture and milestones;
-`CLAUDE.md` holds the rules; `kb/RESUME.md` is where an executing agent starts.
+I wanted to see if the N64's gentlest flight sim could fly on Sega's last console. It can. Still a work in progress, so expect the odd bug.
 
-## Build
-Requires Docker (colima on macOS) and your own US ROM copied to `baserom.z64` at the repo root.
+## What it is
+
+The Pilotwings 64 matching decompilation ([gcsmith/Pilotwings64Decomp](https://github.com/gcsmith/Pilotwings64Decomp)) built with [KallistiOS](https://github.com/KallistiOS/KallistiOS) and the [sh4zam](https://github.com/TechProGabe/sh4zam) SH-4 math library. The game's N64 display lists are interpreted on the CPU and handed to the PowerVR, and its own music and sound players drive the Dreamcast's AICA sound chip. It targets a stock retail console with 16 MB of RAM and builds a `.cdi` you can burn to a CD-R.
+
+## Building it
+
+This repo has no game data in it, and never will. You need your own legally obtained North American N64 ROM (checksums in `docs/rom-provenance.md`) saved as `baserom.z64` at the repo root. Assets are extracted from it at build time. Please don't share the disc images you build, they contain the game.
+
+You need Docker (colima works on macOS).
+
 ```
-./run.sh setup     # container (GCC 14.3.0 + KOS v2.2.2 + mkdcdisc, ~25 min first time), submodules, decomp
-./run.sh disc      # build/wings64.cdi, padded for an 80-min CD-R
-./run.sh test      # tree checks + ROM slice validation
+./run.sh setup     # builds the toolchain container (about an hour the first time) and fetches the decomp
+./run.sh disc      # build/wings64.cdi, padded for a CD-R
+./run.sh gate      # boots a scripted build in Flycast and checks it reaches the milestone
+./run.sh test      # tree checks and host tests
 ```
 
-No game content is included or will ever be committed. Building requires your own
-legally obtained US ROM (`docs/rom-provenance.md`).
+`docs/toolchain.md` and `kb/RESUME.md` have the rest of the commands.
 
-## Acknowledgements (planned lineage)
-- Pilotwings64Decomp (gcsmith et al., MIT) — the game.
-- Birdman64 (NoahVl, MIT) — the patch set and libultra surface for this exact game.
-- ssb64-dc (beigeceleron, MIT) — repo structure, disc pipeline, testing discipline.
-- sm64-dc / sf64-dc / mk64-dc (jnmartin84; gfx core Emill/MaikelChan BSD; sf64-dc CC0) — Fast3D→PVR interpreter and AICA voice driver lineage.
-- DCA3 (skmp) — texture/VRAM and streaming lessons.
-- sh4zam (Falco Girgis) — XMTRX, FIPR, FSCA, FSRRA.
+## A few things that make this fun
+
+- The decomp is never edited. It gets fetched at a pinned revision and patched from `patches/`, one patch per reason.
+- All the float math goes through sh4zam. No doubles anywhere.
+- The biggest speed win was not clever SH-4 code. The game's idle loop was getting the CPU on every scheduler tick, and parking it doubled the frame rate.
+- The N64 draws its vehicle shadows with a z-buffer trick. On the Dreamcast they become PowerVR modifier volumes, the hardware's own shadow feature.
+- Emulator numbers and console numbers live in separate columns. Flycast once said 30 fps while the real console was doing 15.
+
+## Thanks
+
+The decomp authors (MIT) made this possible. Birdman64 (NoahVl) showed what this game needs from libultra, and some of its patches live on here. jnmartin84's sm64-dc, sf64-dc and mk64-dc, and beigeceleron's ssb64-dc, were the maps I leaned on for the graphics interpreter, audio driver and project layout. Thanks also to KallistiOS, sh4zam, and Flycast, which does most of my testing.
+
+Pilotwings 64 belongs to Nintendo and Paradigm. This is an unofficial fan project.
