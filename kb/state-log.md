@@ -1,5 +1,10 @@
 # state-log — evidence, newest first
 
+## 2026-10-11 — hardware run 4 (disc 123d29e-1012-0123: shadows, draw order, splash), maintainer report
+- No SD card in this run, so no log. Maintainer: everything else looks right now; two issues left:
+  water looks wrong (looked right on 462f919, so a regression from a84f8b9) and occasional pop-in on fast
+  left/right turns. Both queued in kb/STATE.md with suspects and kill switches to bisect.
+
 ## 2026-10-11 — frame-rate pass (emulator): ~55-57 fps everywhere, root cause in the scheduler
 - Fable consult -> docs/fps-plan.md; executed changes 1-6 plus decomp -O2 and fsqrt (table in kb/STATE.md),
   each with a kill switch and a gate pass. Flycast DL went title 28.7 -> 19.5 ms, menus 28.3 -> 21.3,

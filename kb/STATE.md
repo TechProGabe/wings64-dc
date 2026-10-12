@@ -58,13 +58,24 @@ Boot screen is a quiet "Loading" + progress bar (DB_BOOT_VERBOSE=1 for the old c
 Splash `src/dc/splash.c` (patches/025, WINGS64_SPLASH): "TECHPROGABE presents" on the Option-screen sky, font 6
 bold, SFX_QUICK_SWISH (WINGS64_SPLASH_SFX), ~2.4 s in Flycast (frame-counted), A/Start skips. Gate passes with it.
 
+## Hardware run 4 (2026-10-11, disc 123d29e-1012-0123, no SD card)
+Maintainer: the visual fixes hold; only two issues left, both logged in the queue below (#2, #3).
+
 ## Ranked queue
 1. **Confirm the fps pass on hardware** (`./run.sh hwdisc`, no burn scheduled by the maintainer): SD log
    `gfx:` + `cpu:` lines per state, PROF dumps. Hypotheses: hardware DL ~10-15 ms flight, 30 fps locked or
    better; menus no longer 13-19 fps; menu loads much shorter. Watch for anything frame-count based that
    now runs fast above 30 fps (Flycast showed none in flight).
-2. **Class A Gyrocopter overview hang** (hardware run 3): read the `stall:` lines from the next hardware log.
+2. **BUG: water looks wrong on hardware** (maintainer, run 4; it looked right on disc 462f919). Regression from
+   a84f8b9. Suspects in order: WINGS64_LAYER_Z (water/sea drawn without a depth test before the scene would now
+   get a painter depth and GEQUAL, or move to TR after it), WINGS64_SHADOW_MOD (modifier flag on every
+   depth-tested header), WINGS64_DXT_EXACT (water texture loaded with a dxt that differs from the tile line).
+   Bisect with the three kill switches on one disc each; compare against a Flycast shot of the same view.
+3. **BUG: pop-in on fast left/right turns** (maintainer, run 4, "sometimes"). Not checked whether it predates
+   a84f8b9. Suspects: decomp terrain/object culling running a frame behind the camera (patches/020 touches the
+   ground-view arrays), WINGS64_OUTCODES trivial reject, or WINGS64_TEX_MEMO serving a stale texture for a frame.
+4. **Class A Gyrocopter overview hang** (hardware run 3): read the `stall:` lines from the next hardware log.
    Visual fixes above need a hardware look; landing target and title pilot overlay still to confirm.
-3. Remaining menu load stalls: re-measure after 023 (Flycast: much shorter), then profile the app thread.
-4. Audio fidelity (M5): reverb via AICA DSP, sub-frame parameter timing, PCM8 for waves that sound bad.
-5. M5 parity (all vehicles/levels), M6 (fps on hardware), M7 release.
+5. Remaining menu load stalls: re-measure after 023 (Flycast: much shorter), then profile the app thread.
+6. Audio fidelity (M5): reverb via AICA DSP, sub-frame parameter timing, PCM8 for waves that sound bad.
+7. M5 parity (all vehicles/levels), M6 (fps on hardware), M7 release.
