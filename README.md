@@ -33,6 +33,14 @@ You need Docker (colima works on macOS).
 
 ## Thanks
 
-The decomp authors (MIT) made this possible. Birdman64 (NoahVl) showed what this game needs from libultra, and some of its patches live on here. jnmartin84's sm64-dc, sf64-dc and mk64-dc, and beigeceleron's ssb64-dc, were the maps I leaned on for the graphics interpreter, audio driver and project layout. Thanks also to KallistiOS, sh4zam, and Flycast, which does most of my testing.
+This port stands on a lot of other people's work:
+
+- **[Pilotwings64Decomp](https://github.com/gcsmith/Pilotwings64Decomp)** by Garrett Smith and contributors (MIT). The whole game, as C. Without it there is no port.
+- **[Birdman64](https://github.com/NoahVl/Birdman64)** by NoahVl (MIT). A PC port of the same decomp. It showed me what this game needs from the N64's OS, and several of its fixes are in `patches/`.
+- **[sm64-dc](https://github.com/jnmartin84/sm64-dc), [sf64-dc](https://github.com/jnmartin84/sf64-dc) and [mk64-dc](https://github.com/jnmartin84/mk64-dc)** by jnmartin84. The blueprint for turning N64 display lists into PowerVR draws and N64 audio into AICA voices.
+- **[ssb64-dc](https://github.com/beigeceleron/ssb64-dc)** by beigeceleron. The model for the repo layout, build and disc pipeline.
+- **[KallistiOS](https://github.com/KallistiOS/KallistiOS)**, the Dreamcast dev kit everything runs on.
+- **[sh4zam](https://github.com/gyrovorbis/sh4zam)** by Falco Girgis and contributors (MIT). All the fast SH-4 math.
+- **[Flycast](https://github.com/flyinghead/flycast)**, which does most of my testing, and **[mkdcdisc](https://gitlab.com/simulant/mkdcdisc)**, which makes the disc images.
 
 Pilotwings 64 belongs to Nintendo and Paradigm. This is an unofficial fan project.
