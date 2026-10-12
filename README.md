@@ -55,6 +55,4 @@ This port stands on a lot of other people's work:
 - **[sh4zam](https://github.com/gyrovorbis/sh4zam)** by Falco Girgis and contributors (MIT). All the fast SH-4 math.
 - **[Flycast](https://github.com/flyinghead/flycast)**, which does most of my testing, and **[mkdcdisc](https://gitlab.com/simulant/mkdcdisc)**, which makes the disc images.
 
-The logo is my own drawing. The lettering is [Titan One](https://fonts.google.com/specimen/Titan+One) by Rodrigo Fuenzalida (SIL Open Font License), and `tools/logo/make_logo.py` rebuilds it.
-
 Pilotwings 64 belongs to Nintendo and Paradigm. This is an unofficial fan project.
