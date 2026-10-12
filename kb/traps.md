@@ -181,3 +181,20 @@
 - **FPSCR.DN flushes denormals in compares too**: `x > 0.0f` is false for a denormal x. Test the bits.
 - Inlined static functions take their caller's section: `section(".text.hot.*")` on a callee that gets
   inlined is ignored; put the attribute on the caller that keeps the code.
+
+## Paid for in the visual-bug pass (2026-10-11)
+- **PW64 shadows are z-buffer shadow volumes** (kernel/graphics.c uvGfxStateDrawDL, state flag 0x2000000): pass 1
+  draws the volume's back faces with the colour image set to the z-buffer (marks "nearest"), pass 2 draws the same
+  display list's front faces as dark XLU shade. Dropping only pass 1 paints the whole volume: the "column" under the
+  Rocket Belt pilot and the trapezoid under the hang glider. The volume model is an open-bottomed prism (top cap +
+  sides, ~200 units deep).
+- **PVR modifier volumes: one header per volume, and the closing header needs PCW bit 6.** A header per triangle
+  restarts the volume; KOS v2.2.2's `pvr_mod_compile` never sets the parameter control word's Volume bit (last
+  polygon), and without it Flycast ORs the closing triangle in as an open volume (its whole projection shadowed).
+  Also: an enabled modifier list must hold a volume every frame (KOS's blank filler is a polygon header).
+- **Cross-list order:** the N64 draws in submission order, the PVR renders OP, then PT, then TR. A no-Z layer drawn
+  before the scene (horizon haze quad, TR) ended up over the glider, terrain and HUD; 2D menu backgrounds hid the
+  3D pilots on pilot select. gfx_f3d.c layer_fix: pre-scene no-Z layers get a tiny painter depth (GEQUAL, OP/PT
+  write it); post-scene no-Z layers go to TR.
+- `_uvDebugPrintf` is empty in the retail game: patches/024 forwards it (`uv:` lines). Fresh saves log
+  "file_load: checksum failure" once; that is the game initialising the EEPROM files, not a bug.
