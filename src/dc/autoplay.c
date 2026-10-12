@@ -7,12 +7,16 @@
  * A step time may be state-relative: "s11+2000:>:300" = 2 s after controller reads (re)start while the
  * game state (D_80362690->state, see game_probe.c) is 11: on entry, and again after any >0.5 s gap
  * (menus poll briefly, then stop while they load). It fires only while the game is in that state. Menu loads stop polling for seconds and
- * vary run to run, so gate scripts use this form.
+ * vary run to run, so gate scripts use this form. "s11#2+5500:A:200" fires only on the 2nd entry into state 11.
+ * DB_AUTOPLAY_FORCE "cls,veh[;cls,veh...]" (e.g. "1,2" = Class A gyrocopter): while the game is in pilot
+ * select (3), overwrite the player's class/vehicle so a fresh save reaches locked tests (crash repro); visit k
+ * to pilot select uses pair k, the last pair repeats. Off by default.
  */
 #include "db.h"
 
 #include <kos.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,9 +37,10 @@
 #define N_L 0x0020
 #define N_R 0x0010
 
-typedef struct { uint32_t at, hold, polls; int16_t state; uint16_t buttons; int8_t sx, sy; uint64_t start; } step_t;
+typedef struct { uint32_t at, hold, polls; int16_t state, visit; uint16_t buttons; int8_t sx, sy; uint64_t start; } step_t;
 extern int wings64_game_state(void);
 static int64_t sStateEntered[64];   /* ms polling (re)started in each game state: entry or end of a load gap; -1 = not yet */
+static int sStateVisits[64];        /* entries into each game state so far (a load gap is not an entry) */
 /* A press lasts its hold time AND at least AUTOPLAY_MIN_POLLS controller reads: the game stops polling
    for seconds after menu changes, and a press that falls in such a gap would otherwise be lost. */
 #define AUTOPLAY_MIN_POLLS 3
@@ -51,6 +56,7 @@ static void parse(void) {
         s.state = -1;
         if (*p == 's') {
             s.state = (int16_t)strtol(p + 1, (char **)&p, 10);
+            if (*p == '#') s.visit = (int16_t)strtol(p + 1, (char **)&p, 10);
             if (*p == '+') p++;
         }
         s.at = (uint32_t)strtoul(p, (char **)&p, 10);
@@ -76,6 +82,23 @@ static void parse(void) {
 int wings64_autoplay(uint32_t poll, uint16_t *buttons, int8_t *sx, int8_t *sy) {
     uint64_t now;
     (void)poll;
+#ifdef DB_AUTOPLAY_FORCE
+    {
+        /* "c,v;c,v;...": entry k into pilot select uses pair k (the last pair repeats) */
+        extern void wings64_force_selection(int cls, int veh);
+        static int was_in3, visit = -1, cls = -1, veh = -1;
+        int in3 = wings64_game_state() == 3;
+        if (in3 && !was_in3) {
+            const char *p = DB_AUTOPLAY_FORCE;
+            visit++;
+            for (int k = 0; k < visit && strchr(p, ';'); k++) p = strchr(p, ';') + 1;
+            sscanf(p, "%d,%d", &cls, &veh);
+            db_log("autoplay: pilot select visit %d: forced class %d vehicle %d\n", visit, cls, veh);
+        }
+        if (in3) wings64_force_selection(cls, veh);
+        was_in3 = in3;
+    }
+#endif
     if (nsteps < 0) {
         parse(); t0 = timer_ms_gettime64();
         for (int i = 0; i < 64; i++) sStateEntered[i] = -1;
@@ -89,6 +112,7 @@ int wings64_autoplay(uint32_t poll, uint16_t *buttons, int8_t *sx, int8_t *sy) {
         if (gap) db_log("autoplay: poll gap %lu ms at %lu ms\n", (unsigned long)(now - last), (unsigned long)now);
         /* menus poll briefly on entry, then stop for seconds while they load: re-arm after a gap */
         if (st >= 0 && st < 64 && (st != last_st || gap)) sStateEntered[st] = (int64_t)now;
+        if (st >= 0 && st < 64 && st != last_st) sStateVisits[st]++;
         last_st = st;
         last = now;
     }
@@ -98,6 +122,7 @@ int wings64_autoplay(uint32_t poll, uint16_t *buttons, int8_t *sx, int8_t *sy) {
         else if (steps[i].state >= 0) {
             if (steps[i].state >= 64 || sStateEntered[steps[i].state] < 0) continue;
             if (wings64_game_state() != steps[i].state) continue;   /* only fire while in that state */
+            if (steps[i].visit && sStateVisits[steps[i].state] != steps[i].visit) continue;
             at += (uint64_t)sStateEntered[steps[i].state];
         }
         if (now >= at && (now < at + steps[i].hold || steps[i].polls < AUTOPLAY_MIN_POLLS)) {

@@ -170,5 +170,6 @@ void prof_poll(unsigned ms, int st) {
 }
 
 unsigned prof_dumps(void) { return sDumps; }
+void prof_dump_now(const char *why) { if (sBins) dump(why); }
 
 #endif /* DB_PROF */

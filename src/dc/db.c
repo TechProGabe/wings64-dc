@@ -288,6 +288,31 @@ void db_log(const char *fmt, ...) {
 }
 #endif
 
+/* The game's _uvDebugPrintf (patches/024). Each format string is logged at most 4 times (per-frame
+   warnings would flood the card); the rest are counted and the count reported at the next new message. */
+void wings64_uv_debug(const char *fmt, va_list ap) {
+#if DB_ENABLE
+    static const char *seen[64];
+    static unsigned char count[64];
+    static unsigned dropped;
+    char line[200];
+    int i, n;
+    if (irq_inside_int()) return;
+    for (i = 0; i < 64 && seen[i] && seen[i] != fmt; i++) {}
+    if (i < 64 && !seen[i]) seen[i] = fmt;
+    if (i == 64 || count[i] >= 4) { dropped++; return; }
+    count[i]++;
+    n = vsnprintf(line, sizeof line, fmt, ap);
+    if (n < 0) return;
+    if (n >= (int)sizeof line) n = sizeof line - 1;
+    while (n > 0 && line[n - 1] == '\n') line[--n] = 0;
+    db_log("uv: %s%s\n", line, count[i] == 4 ? " (further repeats dropped)" : "");
+    if (dropped) { db_log("uv: %u repeated messages dropped so far\n", dropped); dropped = 0; }
+#else
+    (void)fmt; (void)ap;
+#endif
+}
+
 /* ------------------------------------------------------------------ crash hook */
 
 #if DB_CRASH

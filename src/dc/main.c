@@ -57,6 +57,15 @@ void (*volatile wings64_decomp_entry)(void *) = bootproc;
 #define ROW_RESULT 15
 #define ROW_FRAME 17
 
+/* DB_BOOT_VERBOSE=1: the boot check's full text (build id, sh4zam, decomp, every table count and CRC row).
+   0 (default, the console look): a black screen with "Loading" and a progress bar; only failures print
+   text, in red. The serial log (db_log) carries every line either way. */
+#ifndef DB_BOOT_VERBOSE
+#define DB_BOOT_VERBOSE 0
+#endif
+#define BOOT_LINE(row, color, ...) \
+    do { if (DB_BOOT_VERBOSE || (color) == SCREEN_RED) screen_line(row, color, __VA_ARGS__); } while (0)
+
 #ifndef WINGS64_AUDIO
 #define WINGS64_AUDIO 1
 #endif
@@ -155,8 +164,11 @@ static void tag_name(uint32_t tag, char out[5]) {
 }
 
 static void load_progress(uint32_t done, uint32_t total) {
-    screen_line(ROW_LOAD, SCREEN_YELLOW, "loading wings64.fs  %3lu%%  (%lu KB)",
-                (unsigned long)((uint64_t)done * 100u / total), (unsigned long)(done >> 10));
+    if (DB_BOOT_VERBOSE)
+        screen_line(ROW_LOAD, SCREEN_YELLOW, "loading wings64.fs  %3lu%%  (%lu KB)",
+                    (unsigned long)((uint64_t)done * 100u / total), (unsigned long)(done >> 10));
+    else
+        screen_bar((int)((uint64_t)done * 100u / total));
     screen_frame();
 }
 
@@ -166,6 +178,65 @@ static int xmtrx_selftest(void) {
     shz_xmtrx_init_translation(1.0f, 2.0f, 3.0f);
     p = shz_xmtrx_transform_vec4(shz_vec4_init(1.0f, 1.0f, 1.0f, 1.0f));
     return p.x == 2.0f && p.y == 3.0f && p.z == 4.0f && p.w == 1.0f;
+}
+
+/* Stall watchdog (DB builds): no display list for STALL_MS while the game runs is a hang (hardware run 2 froze
+   at a test overview with every thread alive). Log each KOS thread's state, PC, PR, wait reason and the
+   text addresses found on its stack (decode with addr2line on the disc's ELF). Menu loads can pause drawing
+   for a few seconds, so the first report comes at 3 s, a second one plus a profiler dump at 10 s, then every
+   30 s while it lasts. */
+#define STALL_MS 3000
+typedef struct { int tid, prio, state; uint32_t pc, pr, sp; const char *wait; void *k; char label[16]; } stall_thd_t;
+static stall_thd_t sStallThd[24];
+static int sStallN;
+static int stall_collect(kthread_t *t, void *d) {
+    stall_thd_t *s;
+    (void)d;
+    if (sStallN == 24) return 0;
+    s = &sStallThd[sStallN++];
+    s->tid = (int)t->tid; s->prio = (int)t->prio; s->state = (int)t->state;
+    s->pc = t->context.pc; s->pr = t->context.pr; s->sp = t->context.r[15];
+    s->wait = t->state == STATE_WAIT ? t->wait_msg : NULL;
+    s->k = t;
+    snprintf(s->label, sizeof s->label, "%s", t == thd_get_current() ? "main(me)" : t->label);
+    return 0;
+}
+static void stall_report(unsigned ms, int st, unsigned stalled_ms, int dump) {
+    const uint32_t lo = 0x8c010000u, hi = (uint32_t)&_etext;
+    int old = irq_disable();
+    sStallN = 0;
+    thd_each(stall_collect, NULL);
+    irq_restore(old);
+    db_log("stall: no display list for %u ms (state %d, t %u ms, gfx %u, vi %u)\n", stalled_ms, st, ms,
+           wings64_gfx_tasks(), wings64_vi_retraces());
+    for (int i = 0; i < sStallN; i++) {
+        stall_thd_t *s = &sStallThd[i];
+        char bt[120];
+        int n = 0, k = 0;
+        bt[0] = 0;
+        {   /* N64 thread id (0 render, 1 kernel, 3 audio, 4 scheduler, 6 app) in place of the "n64" label */
+            extern int wings64_thread_info(int i, int *id, void **kthd);
+            int id;
+            void *k;
+            for (int j = 0; wings64_thread_info(j, &id, &k); j++)
+                if (k == s->k) snprintf(s->label, sizeof s->label, "n64-t%d", id);
+        }
+        /* poor man's backtrace: words on the stack that point into .text (return addresses, mostly) */
+        if (s->state != STATE_RUNNING && s->sp >= 0x8c000000u && s->sp < 0x8d000000u)
+            for (const uint32_t *p = (const uint32_t *)(s->sp & ~3u); k < 96 && n < (int)sizeof bt - 10; p++, k++)
+                if (*p >= lo && *p < hi && (*p & 1) == 0) n += snprintf(bt + n, sizeof bt - (size_t)n, " %08lx", (unsigned long)*p);
+        db_log("stall: thd %d %-10s prio %d state %d pc %08lx pr %08lx wait %s |%s\n", s->tid, s->label, s->prio,
+               s->state, (unsigned long)s->pc, (unsigned long)s->pr, s->wait ? s->wait : "-", bt);
+    }
+    if (dump) prof_dump_now("stall");
+}
+static void stall_watch(unsigned ms, int st) {
+    static unsigned last_gfx, last_change_ms, reports;
+    unsigned g = wings64_gfx_tasks(), stalled = ms - last_change_ms;
+    if (g != last_gfx || st < 0) { last_gfx = g; last_change_ms = ms; reports = 0; return; }
+    if (stalled < (reports == 0 ? STALL_MS : reports == 1 ? 10000u : 10000u + 30000u * (reports - 1))) return;
+    stall_report(ms, st, stalled, reports == 1);
+    reports++;
 }
 
 int main(int argc, char **argv) {
@@ -184,16 +255,17 @@ int main(int argc, char **argv) {
     screen_init();
 
     db_log("wings64-dc %s\n", wings64_build_id);
-    screen_line(ROW_TITLE, SCREEN_CYAN, "wings64-dc  M%d boot check", WINGS64_MILESTONE);
-    screen_line(ROW_BUILD, SCREEN_GREY, "build %s", wings64_build_id);
+    if (!DB_BOOT_VERBOSE) screen_loading();
+    BOOT_LINE(ROW_TITLE, SCREEN_CYAN, "wings64-dc  M%d boot check", WINGS64_MILESTONE);
+    BOOT_LINE(ROW_BUILD, SCREEN_GREY, "build %s", wings64_build_id);
     math_ok = xmtrx_selftest();
 #ifdef DB_FSQRT_TEST
     { extern void wings64_fsqrt_test(void); wings64_fsqrt_test(); }
 #endif
-    screen_line(ROW_SHZ, math_ok ? SCREEN_GREY : SCREEN_RED, "sh4zam %d.%d.%d SH4 xmtrx %s",
-                SHZ_VERSION_MAJOR, SHZ_VERSION_MINOR, SHZ_VERSION_PATCH, math_ok ? "ok" : "FAIL");
+    BOOT_LINE(ROW_SHZ, math_ok ? SCREEN_GREY : SCREEN_RED, "sh4zam %d.%d.%d SH4 xmtrx %s",
+              SHZ_VERSION_MAJOR, SHZ_VERSION_MINOR, SHZ_VERSION_PATCH, math_ok ? "ok" : "FAIL");
     ok &= math_ok;
-    screen_line(ROW_DECOMP, SCREEN_GREY, "decomp 1a8558f linked, bootproc @ %p", (void *)wings64_decomp_entry);
+    BOOT_LINE(ROW_DECOMP, SCREEN_GREY, "decomp 1a8558f linked, bootproc @ %p", (void *)wings64_decomp_entry);
     screen_frame();
 
     root = assetroot_probe();
@@ -202,9 +274,9 @@ int main(int argc, char **argv) {
         ok = 0;
         goto done;
     }
-    screen_line(ROW_ROOT, SCREEN_WHITE, "root %s  disc %s", root, assetroot_disc_id());
+    BOOT_LINE(ROW_ROOT, SCREEN_WHITE, "root %s  disc %s", root, assetroot_disc_id());
     if (romfs_meta_read(root, &meta) != 0)
-        screen_line(ROW_CRC, SCREEN_YELLOW, "fsmeta.txt missing: no CRC check");
+        BOOT_LINE(ROW_CRC, SCREEN_YELLOW, "fsmeta.txt missing: no CRC check");
 
     t0 = timer_ms_gettime64();
     if (romfs_load(root, load_progress) != 0) {
@@ -213,7 +285,7 @@ int main(int argc, char **argv) {
         goto done;
     }
     t_load = timer_ms_gettime64() - t0;
-    screen_line(ROW_LOAD, SCREEN_WHITE, "wings64.fs %lu bytes in %lu ms (%lu KB/s)",
+    BOOT_LINE(ROW_LOAD, SCREEN_WHITE, "wings64.fs %lu bytes in %lu ms (%lu KB/s)",
                 (unsigned long)romfs_size, (unsigned long)t_load,
                 (unsigned long)(t_load ? (romfs_size / 1024u) * 1000u / (uint32_t)t_load : 0));
     db_log("romfs: %lu bytes in %lu ms\n", (unsigned long)romfs_size, (unsigned long)t_load);
@@ -222,7 +294,7 @@ int main(int argc, char **argv) {
     {
         uint64_t ta = timer_ms_gettime64();
         int aok = aud_drv_init(root) == 0;
-        screen_line(ROW_AUDIO, aok ? SCREEN_GREY : SCREEN_RED, "audio pool %lu KB, %u waves, %lu ms%s",
+        BOOT_LINE(ROW_AUDIO, aok ? SCREEN_GREY : SCREEN_RED, "audio pool %lu KB, %u waves, %lu ms%s",
                     (unsigned long)(aud_drv_pool_bytes() >> 10), aud_drv_wave_count(),
                     (unsigned long)(timer_ms_gettime64() - ta), aok ? "" : "  FAILED (silent)");
     }
@@ -230,7 +302,7 @@ int main(int argc, char **argv) {
     crc = romfs_crc32();
     if (meta.valid) {
         int crc_ok = crc == meta.crc32 && romfs_size == meta.size;
-        screen_line(ROW_CRC, crc_ok ? SCREEN_GREEN : SCREEN_RED, "crc32 %08lX  manifest %08lX  %s",
+        BOOT_LINE(ROW_CRC, crc_ok ? SCREEN_GREEN : SCREEN_RED, "crc32 %08lX  manifest %08lX  %s",
                     (unsigned long)crc, (unsigned long)meta.crc32, crc_ok ? "match" : "MISMATCH");
         ok &= crc_ok;
     }
@@ -239,10 +311,10 @@ int main(int argc, char **argv) {
     {
         int walk_ok = romfs_count(&counts) == 0 && counts.walk_end == ROMFS_FILESYS_END;
         int count_ok = !meta.valid || (counts.uv_files == meta.uv_files && counts.index_entries == meta.index_entries);
-        screen_line(ROW_INDEX, count_ok ? SCREEN_GREEN : SCREEN_RED, "UV files %lu  (index %lu, manifest %lu)",
+        BOOT_LINE(ROW_INDEX, count_ok ? SCREEN_GREEN : SCREEN_RED, "UV files %lu  (index %lu, manifest %lu)",
                     (unsigned long)counts.uv_files, (unsigned long)counts.index_entries,
                     (unsigned long)(meta.valid ? meta.uv_files : 0));
-        screen_line(ROW_FORM, walk_ok ? SCREEN_GREEN : SCREEN_RED, "FORM headers ok %lu/%lu  walk end %06lX",
+        BOOT_LINE(ROW_FORM, walk_ok ? SCREEN_GREEN : SCREEN_RED, "FORM headers ok %lu/%lu  walk end %06lX",
                     (unsigned long)counts.form_ok, (unsigned long)counts.uv_files, (unsigned long)counts.walk_end);
         ok &= walk_ok && count_ok;
         db_log("romfs: uv_files %lu form_ok %lu walk_end %06lX\n", (unsigned long)counts.uv_files,
@@ -256,7 +328,7 @@ int main(int argc, char **argv) {
                 tag_name(counts.tag[i], nm);
                 n += snprintf(line + n, sizeof line - (size_t)n, "%s %lu  ", nm, (unsigned long)counts.count[i]);
             }
-            screen_line(ROW_TAGS + r, SCREEN_GREY, "%s", line);
+            BOOT_LINE(ROW_TAGS + r, SCREEN_GREY, "%s", line);
         }
     }
 
@@ -265,7 +337,7 @@ done:
         /* Free RAM = top of 16 MB minus the heap break (mallinfo().fordblks is only arena slack). */
         extern char end[];
         uint32_t brk = (uint32_t)mm_sbrk(0);
-        screen_line(ROW_MEM, SCREEN_GREY, "RAM image %lu KB  heap %lu KB  free %lu KB",
+        BOOT_LINE(ROW_MEM, SCREEN_GREY, "RAM image %lu KB  heap %lu KB  free %lu KB",
                     (unsigned long)(((uint32_t)end - 0x8C000000u) >> 10),
                     (unsigned long)((brk - (uint32_t)end) >> 10), (unsigned long)((0x8D000000u - brk) >> 10));
     }
@@ -275,6 +347,7 @@ done:
     if (ok && WINGS64_MILESTONE >= 2) {
         wings64_rdram_init();
         db_log("boot: starting decomp bootproc\n");
+        if (!DB_BOOT_VERBOSE) { screen_bar(100); screen_frame(); } /* the last frame the console shows before the game draws */
         bootproc(NULL);
         prof_init();     /* DB_PROF: chained on the scheduler tick that bootproc's threads now run on */
         /* The game's scheduler thread owns the PVR from here (gfx_f3d.c); main only reports.
@@ -304,6 +377,7 @@ done:
             if (ms == 20000) { extern void wings64_dump_model_scales(void); wings64_dump_model_scales(); }
 #endif
             prof_poll(ms, st);
+            if (DB_ENABLE) stall_watch(ms, st);
             if (ms % 1000 == 0) audio_tick(ms, st, seen_flight);
             if (ms % 5000 == 0) thread_cpu_log();
 #if DB_SOAK && WINGS64_AUDIO
@@ -334,7 +408,7 @@ done:
             }
         }
     }
-    screen_line(ROW_RESULT, ok ? SCREEN_GREEN : SCREEN_RED, "M%d RESULT: %s", WINGS64_MILESTONE, ok ? "PASS" : "FAIL");
+    BOOT_LINE(ROW_RESULT, ok ? SCREEN_GREEN : SCREEN_RED, "M%d RESULT: %s", WINGS64_MILESTONE, ok ? "PASS" : "FAIL");
     /* M0/M1 gates end here; from M2 the marker comes from the game's own state machine. */
     if (WINGS64_MILESTONE < 2 || !ok) db_log("WINGS64_M%d_%s\n", WINGS64_MILESTONE, ok ? "OK" : "FAIL");
     db_sd_flush("exit");

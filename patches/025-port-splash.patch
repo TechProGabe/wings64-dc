@@ -1,0 +1,21 @@
+--- a/src/app/game.c
++++ b/src/app/game.c
+@@ -44,6 +44,7 @@
+ #include "app/code_D2B10.h"
+ #ifdef WINGS64_DC
+ #include <wings64_settings.h> // PW64: port settings menu
++#include <wings64_splash.h> // PW64: port splash
+ #endif
+ 
+ Unk80362690* D_80362690;
+@@ -182,6 +183,10 @@
+ s32 gameUpdateStateTitle(Unk80362690* arg0) {
+     s32 gameState;
+ 
++#if defined(WINGS64_DC) && WINGS64_SPLASH
++    // DIVERGES: port splash (not on the N64): "TECHPROGABE presents" once per boot, before the title
++    if (wings64_splash_run()) D_8034F160 = -1; // it loaded its own level: the title below reloads its own
++#endif
+     if (uvControllerCheckInserted(0) == 0) {
+         func_8032D90C();
+     }

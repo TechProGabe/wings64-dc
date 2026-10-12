@@ -7,6 +7,16 @@ s32 wings64_game_state(void) {
     return D_80362690 != NULL ? (s32)D_80362690->state : -1;
 }
 
+/* Gate/repro only (DB_AUTOPLAY_FORCE, src/dc/autoplay.c): overwrite the current player's class and
+   vehicle so a scripted run reaches tests the save has not unlocked. */
+void wings64_force_selection(s32 cls, s32 veh) {
+    Unk80362690_Unk0 *p;
+    if (D_80362690 == NULL) return;
+    p = &D_80362690->unkC[D_80362690->unk9C];
+    if (cls >= 0) p->cls = (u16)cls;
+    if (veh >= 0) p->veh = (u16)veh;
+}
+
 #include <uv_graphics.h>
 #include <uv_texture.h>
 void db_log(const char *fmt, ...);

@@ -13,10 +13,12 @@
 void prof_init(void);
 void prof_poll(unsigned ms, int state);
 unsigned prof_dumps(void);
+void prof_dump_now(const char *why);   /* main thread: dump the current window (stall watchdog) */
 #else
 static inline void prof_init(void) {}
 static inline void prof_poll(unsigned ms, int state) { (void)ms; (void)state; }
 static inline unsigned prof_dumps(void) { return 0; }
+static inline void prof_dump_now(const char *why) { (void)why; }
 #endif
 
 #endif

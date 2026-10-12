@@ -48,6 +48,25 @@ void screen_line(int row, uint16_t color, const char *fmt, ...) {
     dirty = 1;
 }
 
+#define BAR_X 192
+#define BAR_Y 404
+#define BAR_W 256
+#define BAR_H 4
+
+void screen_loading(void) {
+    bfont_draw_str_ex(pixels + (BAR_Y - 28) * TEX_W + BAR_X, TEX_W, SCREEN_GREY, 0x0000, 16, true, "Loading");
+    screen_bar(0);
+}
+
+void screen_bar(int pct) {
+    uint16_t *dst = pixels + BAR_Y * TEX_W + BAR_X;
+    int filled = (pct < 0 ? 0 : pct > 100 ? 100 : pct) * BAR_W / 100;
+    for (int y = 0; y < BAR_H; y++)
+        for (int x = 0; x < BAR_W; x++)
+            dst[y * TEX_W + x] = x < filled ? 0xFFE0 : 0x2104;   /* yellow over a dim track */
+    dirty = 1;
+}
+
 static void quad(void) {
     pvr_vertex_t v;
     const float u1 = 640.0f / TEX_W, v1 = 480.0f / TEX_H;

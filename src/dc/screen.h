@@ -17,5 +17,9 @@ void screen_init(void);
 void screen_line(int row, uint16_t color, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 /* Re-uploads the texture if any line changed, then renders one PVR frame. */
 void screen_frame(void);
+/* Console-style boot look (main.c, DB_BOOT_VERBOSE=0): "Loading" over a thin progress bar at the foot of
+   the screen. pct 0..100; only the bar is redrawn, so call screen_frame after it. */
+void screen_loading(void);
+void screen_bar(int pct);
 
 #endif
